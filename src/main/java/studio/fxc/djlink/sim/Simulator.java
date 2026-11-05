@@ -16,7 +16,11 @@ import studio.fxc.djlink.osc.OscMessage;
 import studio.fxc.djlink.osc.Outbox;
 import studio.fxc.djlink.osc.ResponseRoute;
 
+import javax.imageio.ImageIO;
+import java.awt.image.BufferedImage;
+import java.io.ByteArrayInputStream;
 import java.io.IOException;
+import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.Paths;
 import java.util.ArrayList;
@@ -271,8 +275,7 @@ public final class Simulator {
             emitStatus(deck);
             return;
         }
-        state.metadata(deck.number, new TrackInfo(track.trackId, track.title, track.artist, null, "", "",
-                (int) (track.durationMs() / 1000), null, null, null, null, 0, null, track.bpm));
+        sendMetadata(deck);
         sendPhrases(deck);
         sendAssets(deck.number, track);
         emitPosition(deck, PositionData.REASON_MOVEMENT);
@@ -292,11 +295,32 @@ public final class Simulator {
             WaveformData preview = track.realPreview != null ? track.realPreview : SimAssets.preview(track, detail);
             state.waveform(player, preview,
                     assets.write(p + "-preview", "fxwf", AssetCodec.encode(preview)).toString());
-            state.art(player, track.trackId, SimAssets.ART_SIZE, SimAssets.ART_SIZE,
-                    assets.write(p + "-art", "jpg", SimAssets.art(track)).toString());
+            sendArt(player, track);
         } catch (IOException | RuntimeException e) {
             logger.warn("Unable to write simulated track assets for deck {}", player, e);
         }
+    }
+
+    private void sendMetadata(Deck deck) {
+        final SimTrack track = deck.track;
+        state.metadata(deck.number, new TrackInfo(track.trackId, track.title, track.artist, null, "", "",
+                (int) (track.durationMs() / 1000), null, null, null, null, 0, null, track.bpm));
+    }
+
+    /** The track's cover file if it has one, else generated art. */
+    private void sendArt(int player, SimTrack track) throws IOException {
+        if (track.artFile != null) {
+            final byte[] bytes = Files.readAllBytes(track.artFile);
+            final BufferedImage image = ImageIO.read(new ByteArrayInputStream(bytes));
+            if (image == null) throw new IOException("Not an image: " + track.artFile);
+            final String name = track.artFile.getFileName().toString().toLowerCase(Locale.ROOT);
+            final String ext = name.endsWith(".png") ? "png" : "jpg";
+            state.art(player, track.trackId, image.getWidth(), image.getHeight(),
+                    assets.write("p" + player + "-art", ext, bytes).toString());
+            return;
+        }
+        state.art(player, track.trackId, SimAssets.ART_SIZE, SimAssets.ART_SIZE,
+                assets.write("p" + player + "-art", "jpg", SimAssets.art(track)).toString());
     }
 
     private void sendPhrases(Deck deck) {
@@ -466,6 +490,31 @@ public final class Simulator {
             case "master":
                 setMaster(deck.number);
                 return null;
+            case "info": {
+                if (deck.track == null) return fail("info: no track loaded");
+                if (msg.arg(1) == null) return fail("info: give a title (and an artist)");
+                final String title = String.valueOf(msg.arg(1));
+                final String artist = msg.arg(2) == null ? deck.track.artist : String.valueOf(msg.arg(2));
+                deck.track = deck.track.withInfo(title, artist);
+                sendMetadata(deck);
+                return null;
+            }
+            case "art": {
+                if (deck.track == null) return fail("art: no track loaded");
+                if (msg.arg(1) == null) return fail("art: give a JPEG or PNG file");
+                if (assets == null) return fail("art: no asset folder");
+                final Path file = Paths.get(String.valueOf(msg.arg(1))).toAbsolutePath();
+                if (!Files.isRegularFile(file)) return fail("art: no such file: " + file);
+                final SimTrack before = deck.track;
+                deck.track = deck.track.withArt(file);
+                try {
+                    sendArt(deck.number, deck.track);
+                } catch (IOException | RuntimeException e) {
+                    deck.track = before;
+                    return fail("art: " + e.getMessage());
+                }
+                return null;
+            }
             case "onair": {
                 Integer on = msg.intArg(1);
                 deck.onAir = on == null || on != 0;

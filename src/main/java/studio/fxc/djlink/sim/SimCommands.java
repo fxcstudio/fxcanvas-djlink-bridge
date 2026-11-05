@@ -29,6 +29,8 @@ public final class SimCommands {
             "                             spaces); optional Lighting bank",
             "  bank <deck> <bank>         change the loaded track's Lighting bank (default cool natural",
             "                             hot subtle warm vivid club_1 club_2) and resend its phrases",
+            "  info <deck> \"title\" [\"artist\"]  rename the loaded track (sends new metadata)",
+            "  art <deck> <file>          use a JPEG or PNG cover file as the track's album art",
             "  master <deck>              make a deck the tempo master",
             "  onair <deck> <0|1>         channel fader up or down",
             "  state                      print (and send /sim/deck for) every deck",

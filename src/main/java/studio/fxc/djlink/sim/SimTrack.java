@@ -3,6 +3,7 @@ package studio.fxc.djlink.sim;
 import studio.fxc.djlink.assets.WaveformData;
 import studio.fxc.djlink.model.PhraseData;
 
+import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Locale;
@@ -26,6 +27,8 @@ public final class SimTrack {
     /** Waveforms read from a real analysis file, or null to generate them ({@link SimAssets}). */
     public final WaveformData realPreview;
     public final WaveformData realDetail;
+    /** A cover image file (JPEG or PNG) to send as album art, or null to generate one. */
+    public final Path artFile;
 
     public SimTrack(int trackId, String title, String artist, float bpm, long firstBeatMs, int beatCount,
                     PhraseData phrases) {
@@ -34,6 +37,11 @@ public final class SimTrack {
 
     public SimTrack(int trackId, String title, String artist, float bpm, long firstBeatMs, int beatCount,
                     PhraseData phrases, WaveformData realPreview, WaveformData realDetail) {
+        this(trackId, title, artist, bpm, firstBeatMs, beatCount, phrases, realPreview, realDetail, null);
+    }
+
+    public SimTrack(int trackId, String title, String artist, float bpm, long firstBeatMs, int beatCount,
+                    PhraseData phrases, WaveformData realPreview, WaveformData realDetail, Path artFile) {
         if (bpm <= 0) throw new IllegalArgumentException("bpm must be positive");
         if (beatCount < 1) throw new IllegalArgumentException("beatCount must be at least 1");
         this.trackId = trackId;
@@ -45,6 +53,19 @@ public final class SimTrack {
         this.phrases = phrases;
         this.realPreview = realPreview;
         this.realDetail = realDetail;
+        this.artFile = artFile;
+    }
+
+    /** The same track under another title and artist. */
+    public SimTrack withInfo(String newTitle, String newArtist) {
+        return new SimTrack(trackId, newTitle, newArtist, bpm, firstBeatMs, beatCount, phrases, realPreview,
+                realDetail, artFile);
+    }
+
+    /** The same track with a cover image file as its album art. */
+    public SimTrack withArt(Path file) {
+        return new SimTrack(trackId, title, artist, bpm, firstBeatMs, beatCount, phrases, realPreview, realDetail,
+                file);
     }
 
     /** Milliseconds into the track at a (0-based, fractional) beat position. */
@@ -61,7 +82,7 @@ public final class SimTrack {
         if (phrases == null) return this;
         return new SimTrack(trackId, title, artist, bpm, firstBeatMs, beatCount,
                 new PhraseData(phrases.trackId, phrases.mood, bank, phrases.endBeat, phrases.entries),
-                realPreview, realDetail);
+                realPreview, realDetail, artFile);
     }
 
     // =========================================================================

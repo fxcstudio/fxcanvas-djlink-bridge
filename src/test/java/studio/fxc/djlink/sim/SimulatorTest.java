@@ -212,6 +212,12 @@ class SimulatorTest {
         assertEquals(OscMessage.of("/master/player", 2), last(at("/master/player")));
         assertNull(cmd("onair 2 1"));
         assertEquals(OscMessage.of("/on-air/2", 1), last(at("/on-air/2")));
+
+        assertNull(cmd("info 2 \"On My Knees\" \"RUFUS DU SOL\""));
+        assertEquals(OscMessage.of("/metadata/2/title", "On My Knees"), last(at("/metadata/2/title")));
+        assertEquals(OscMessage.of("/metadata/2/artist", "RUFUS DU SOL"), last(at("/metadata/2/artist")));
+        assertNotNull(cmd("info 2"), "a title is required");
+        assertNotNull(cmd("art 2 missing.jpg"), "a missing file is refused");
     }
 
     @Test

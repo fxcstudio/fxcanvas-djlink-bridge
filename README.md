@@ -101,6 +101,8 @@ numbers start at 1.
 | `tempo <deck> <bpm>` | Change the pitch to reach this tempo |
 | `load <deck> <name\|file> [bank]` | Load a track, optionally with another Lighting bank |
 | `bank <deck> <bank>` | Change the loaded track's Lighting bank and resend its phrases |
+| `info <deck> "title" ["artist"]` | Rename the loaded track (sends new metadata) |
+| `art <deck> <file>` | Send a JPEG or PNG file as the loaded track's album art |
 | `master <deck>` | Make the deck tempo master |
 | `onair <deck> <0\|1>` | Channel fader up or down |
 | `state` | Print every deck (over OSC: one `/sim/deck` per deck) |

@@ -118,6 +118,17 @@ class SimAssetsTest {
             sent.clear();
             assertEquals(null, sim.command(SimCommands.parse("load 1 c")));
             assertTrue(sent.stream().anyMatch(m -> m.address().equals("/art/1") && m.intArg(0) == 9003));
+
+            // A cover file of your own: sent as is, with its real size.
+            Path cover = dir.resolve("cover.png");
+            ImageIO.write(new BufferedImage(64, 48, BufferedImage.TYPE_INT_RGB), "png", cover.toFile());
+            sent.clear();
+            assertEquals(null, sim.command(SimCommands.parse("art 1 \"" + cover + "\"")));
+            OscMessage art = sent.stream().filter(m -> m.address().equals("/art/1")).findFirst().orElseThrow();
+            assertEquals(64, art.intArg(1));
+            assertEquals(48, art.intArg(2));
+            assertTrue(((String) art.arg(3)).endsWith(".png"));
+            assertArrayEquals(Files.readAllBytes(cover), Files.readAllBytes(Paths.get((String) art.arg(3))));
         }
     }
 }

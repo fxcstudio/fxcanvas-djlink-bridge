@@ -2,6 +2,7 @@ package studio.fxc.djlink;
 
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import studio.fxc.djlink.assets.AssetStore;
 import studio.fxc.djlink.osc.OscCodec;
 import studio.fxc.djlink.osc.OscMessage;
 import studio.fxc.djlink.osc.OscServer;
@@ -46,6 +47,9 @@ public final class Main {
     }
 
     public static void main(String[] args) throws Exception {
+        // Album art is decoded (and simulated art drawn) with java.awt. Headless,
+        // so that never opens a window or a macOS dock icon.
+        System.setProperty("java.awt.headless", "true");
         final Options options;
         try {
             options = Options.parse(args);
@@ -86,12 +90,15 @@ public final class Main {
         // be able to drive the bridge from the network.
         OscServer server = new OscServer(InetAddress.getByName("127.0.0.1"), options.oscPort, events);
         BridgeState state = new BridgeState(server);
+        final AssetStore assets = new AssetStore(options.assetDir != null
+                ? Paths.get(options.assetDir) : AssetStore.defaultDir(options.oscPort));
+        logger.info("Track assets go to {}", assets.dir());
 
         DjLinkAdapter adapter = null;
         if (options.simulate) {
             final Simulator sim;
             try {
-                sim = createSimulator(options, state, server);
+                sim = createSimulator(options, state, server, assets);
             } catch (IOException | IllegalArgumentException e) {
                 System.err.println("Cannot start the simulator: " + e.getMessage());
                 server.close();
@@ -115,7 +122,8 @@ public final class Main {
             startConsole(sim, events);
         } else {
             server.setFallback(state::handle);
-            adapter = new DjLinkAdapter(state, events, options);
+            adapter = new DjLinkAdapter(state, events, options, assets);
+            state.setDemandListener(adapter::demandChanged);
             adapter.start();
         }
         server.start();
@@ -134,6 +142,7 @@ public final class Main {
             }
             server.close();
             events.shutdownNow();
+            assets.close();
             done.countDown();
         }, "shutdown"));
         done.await();
@@ -143,10 +152,11 @@ public final class Main {
     // Simulator
     // =========================================================================
 
-    private static Simulator createSimulator(Options options, BridgeState state, OscServer server)
-            throws IOException {
+    private static Simulator createSimulator(Options options, BridgeState state, OscServer server,
+                                             AssetStore assets) throws IOException {
         List<SimTrack> tracks = Simulator.resolveTracks(options.simTracks);
-        Simulator sim = new Simulator(state, server, options.simDecks, options.simSpeed, System.out::println);
+        Simulator sim = new Simulator(state, server, options.simDecks, options.simSpeed, System.out::println,
+                assets);
         if (options.simScript != null) {
             for (String line : Files.readAllLines(Paths.get(options.simScript), StandardCharsets.UTF_8)) {
                 sim.addScriptLine(line);

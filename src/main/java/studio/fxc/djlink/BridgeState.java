@@ -2,6 +2,7 @@ package studio.fxc.djlink;
 
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import studio.fxc.djlink.assets.WaveformData;
 import studio.fxc.djlink.model.DeckState;
 import studio.fxc.djlink.model.PhraseData;
 import studio.fxc.djlink.model.PositionData;
@@ -44,6 +45,19 @@ public final class BridgeState {
     public static final String POSITIONS = "/positions";
     /** Since 1.1.0: play state, loop and end of track per player. */
     public static final String DECK_STATE = "/deck-state";
+    /** Since 1.3.0: waveform preview, waveform detail and beat grid files per player. */
+    public static final String WAVEFORMS = "/waveforms";
+    /** Since 1.3.0: album art files per player. */
+    public static final String ART = "/art";
+
+    /**
+     * Told when a demand-driven topic ({@link #WAVEFORMS}, {@link #ART}) gets
+     * its first subscriber or loses its last, so the adapter only asks the
+     * players for that data while someone wants it.
+     */
+    public interface DemandListener {
+        void demandChanged(String topic, boolean wanted);
+    }
 
     /** Highest player number that is a deck (CDJ-3000 and DJM-V10 setups use 1-6). */
     public static final int MAX_PLAYER = 6;
@@ -71,6 +85,11 @@ public final class BridgeState {
     private final TreeMap<Integer, Integer> phraseNone = new TreeMap<>();
     private final TreeMap<Integer, PositionData> positions = new TreeMap<>();
     private final TreeMap<Integer, DeckState> deckStates = new TreeMap<>();
+    /** Latest /waveform message per player and kind ("preview", "detail"). */
+    private final TreeMap<Integer, TreeMap<String, OscMessage>> waveforms = new TreeMap<>();
+    private final TreeMap<Integer, OscMessage> beatGrids = new TreeMap<>();
+    private final TreeMap<Integer, OscMessage> art = new TreeMap<>();
+    private DemandListener demandListener = (topic, wanted) -> { };
 
     private Integer masterPlayer;
     private Float masterTempo;
@@ -78,6 +97,15 @@ public final class BridgeState {
 
     public BridgeState(Outbox outbox) {
         this.outbox = Objects.requireNonNull(outbox);
+    }
+
+    public void setDemandListener(DemandListener listener) {
+        this.demandListener = listener == null ? (topic, wanted) -> { } : listener;
+    }
+
+    /** True while a client streams {@code topic}. */
+    public boolean isWanted(String topic) {
+        return subs.hasSubscribers(topic);
     }
 
     // =========================================================================
@@ -105,6 +133,14 @@ public final class BridgeState {
             case MASTER:
                 streamable(msg, route, true);
                 break;
+            case WAVEFORMS:
+            case ART: {
+                final boolean before = subs.hasSubscribers(msg.address());
+                streamable(msg, route, true);
+                final boolean after = subs.hasSubscribers(msg.address());
+                if (before != after) demandListener.demandChanged(msg.address(), after);
+                break;
+            }
             case BEATS:
                 streamable(msg, route, false);
                 break;
@@ -203,6 +239,13 @@ public final class BridgeState {
             case DECK_STATE:
                 deckStates.forEach((n, d) -> out.add(deckMessage(n, d)));
                 break;
+            case WAVEFORMS:
+                waveforms.forEach((n, byKind) -> out.addAll(byKind.values()));
+                out.addAll(beatGrids.values());
+                break;
+            case ART:
+                out.addAll(art.values());
+                break;
             case MASTER:
                 if (masterPlayer != null) {
                     out.add(OscMessage.of("/master/player", masterPlayer));
@@ -242,6 +285,9 @@ public final class BridgeState {
         phraseNone.remove(number);
         positions.remove(number);
         deckStates.remove(number);
+        waveforms.remove(number);
+        beatGrids.remove(number);
+        art.remove(number);
     }
 
     /**
@@ -358,6 +404,48 @@ public final class BridgeState {
     public void deckState(int player, DeckState state) {
         if (state.equals(deckStates.put(player, state))) return;
         publish(DECK_STATE, deckMessage(player, state));
+    }
+
+    // =========================================================================
+    // Track assets (since 1.3.0): files written by an AssetStore
+    // =========================================================================
+
+    /** A waveform for the track on a player, written to {@code path}. */
+    public void waveform(int player, WaveformData w, String path) {
+        OscMessage m = OscMessage.of("/waveform/" + player, w.trackId, w.kind.oscName(), w.style.oscName(),
+                w.bands ? 1 : 0, w.segmentCount(), w.segmentsPerSecond, clampInt(w.durationMs), path);
+        waveforms.computeIfAbsent(player, p -> new TreeMap<>()).put(w.kind.oscName(), m);
+        publish(WAVEFORMS, m);
+    }
+
+    /** The track on a player has no waveform of this kind (or the deck unloaded, trackId 0). */
+    public void waveformNone(int player, int trackId, WaveformData.Kind kind) {
+        TreeMap<String, OscMessage> byKind = waveforms.get(player);
+        if (byKind != null) byKind.remove(kind.oscName());
+        publish(WAVEFORMS, OscMessage.of("/waveform/" + player + "/none", trackId, kind.oscName()));
+    }
+
+    public void beatGrid(int player, int trackId, int beatCount, String path) {
+        OscMessage m = OscMessage.of("/beat-grid/" + player, trackId, beatCount, path);
+        beatGrids.put(player, m);
+        publish(WAVEFORMS, m);
+    }
+
+    public void beatGridNone(int player, int trackId) {
+        beatGrids.remove(player);
+        publish(WAVEFORMS, OscMessage.of("/beat-grid/" + player + "/none", trackId));
+    }
+
+    /** Album art (JPEG) for the track on a player. */
+    public void art(int player, int trackId, int width, int height, String path) {
+        OscMessage m = OscMessage.of("/art/" + player, trackId, width, height, path);
+        art.put(player, m);
+        publish(ART, m);
+    }
+
+    public void artNone(int player, int trackId) {
+        art.remove(player);
+        publish(ART, OscMessage.of("/art/" + player + "/none", trackId));
     }
 
     // =========================================================================

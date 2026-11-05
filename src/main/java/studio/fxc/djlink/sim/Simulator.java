@@ -4,6 +4,10 @@ import org.deepsymmetry.cratedigger.pdb.RekordboxAnlz;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import studio.fxc.djlink.BridgeState;
+import studio.fxc.djlink.assets.AssetCodec;
+import studio.fxc.djlink.assets.AssetStore;
+import studio.fxc.djlink.assets.BeatGridData;
+import studio.fxc.djlink.assets.WaveformData;
 import studio.fxc.djlink.model.DeckState;
 import studio.fxc.djlink.model.PhraseData;
 import studio.fxc.djlink.model.PositionData;
@@ -71,6 +75,7 @@ public final class Simulator {
 
     private final BridgeState state;
     private final Outbox outbox;
+    private final AssetStore assets;
     private final List<Deck> decks = new ArrayList<>();
     private final double speed;
     private final Consumer<String> console;
@@ -97,6 +102,13 @@ public final class Simulator {
      * @param console   where text replies go (state, help, errors); may be null
      */
     public Simulator(BridgeState state, Outbox outbox, int deckCount, double speed, Consumer<String> console) {
+        this(state, outbox, deckCount, speed, console, null);
+    }
+
+    /** @param assets where track waveforms, beat grids and art are written; null for none */
+    public Simulator(BridgeState state, Outbox outbox, int deckCount, double speed, Consumer<String> console,
+                     AssetStore assets) {
+        this.assets = assets;
         this.state = state;
         this.outbox = outbox;
         this.speed = speed > 0 ? speed : 1.0;
@@ -262,8 +274,29 @@ public final class Simulator {
         state.metadata(deck.number, new TrackInfo(track.trackId, track.title, track.artist, null, "", "",
                 (int) (track.durationMs() / 1000), null, null, null, null, 0, null, track.bpm));
         sendPhrases(deck);
+        sendAssets(deck.number, track);
         emitPosition(deck, PositionData.REASON_MOVEMENT);
         emitStatus(deck);
+    }
+
+    /** Waveforms, beat grid and art for a newly loaded track (the real ones from an analysis file if read). */
+    private void sendAssets(int player, SimTrack track) {
+        if (assets == null) return;
+        final String p = "p" + player;
+        try {
+            BeatGridData grid = SimAssets.beatGrid(track);
+            state.beatGrid(player, track.trackId, grid.beatCount(),
+                    assets.write(p + "-grid", "fxbg", AssetCodec.encode(grid)).toString());
+            WaveformData detail = track.realDetail != null ? track.realDetail : SimAssets.detail(track);
+            state.waveform(player, detail, assets.write(p + "-detail", "fxwf", AssetCodec.encode(detail)).toString());
+            WaveformData preview = track.realPreview != null ? track.realPreview : SimAssets.preview(track, detail);
+            state.waveform(player, preview,
+                    assets.write(p + "-preview", "fxwf", AssetCodec.encode(preview)).toString());
+            state.art(player, track.trackId, SimAssets.ART_SIZE, SimAssets.ART_SIZE,
+                    assets.write(p + "-art", "jpg", SimAssets.art(track)).toString());
+        } catch (IOException | RuntimeException e) {
+            logger.warn("Unable to write simulated track assets for deck {}", player, e);
+        }
     }
 
     private void sendPhrases(Deck deck) {

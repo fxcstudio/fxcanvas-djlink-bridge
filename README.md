@@ -13,6 +13,8 @@ features FXCanvas uses, plus these additions:
 - `/phrases`: rekordbox phrase analysis (song structure) for each loaded track.
 - `/positions`: the beat-grid beat and time each player is on, every beat and after every jump.
 - `/deck-state`: play state, loops and end of track per player.
+- `/waveforms` and `/art`: waveform preview, waveform detail, beat grid and
+  album art files for each loaded track (since 1.3.0).
 
 > **Unofficial.** This project is not affiliated with, endorsed by, or supported
 > by Pioneer DJ, AlphaTheta, or rekordbox. Use it at your own risk; see the
@@ -23,7 +25,7 @@ features FXCanvas uses, plus these additions:
 Java 11 or later.
 
 ```
-java -jar fxc-djlink-bridge-1.2.0.jar [-o 17002] [-r] [-d NUM] [-L file.log]
+java -jar fxc-djlink-bridge-1.3.0.jar [-o 17002] [-r] [-d NUM] [-L file.log]
 ```
 
 The OSC server listens on `127.0.0.1` only. Send `/respond <port>` first to
@@ -35,6 +37,7 @@ choose where responses go (default: the sender's port plus one).
 | `-r, --real-player` | off | Try to use player number 1-4 |
 | `-d, --device-number NUM` | auto | Fixed device number (overrides `-r`) |
 | `-L, --log-file PATH` | stderr | Log to a rotating file |
+| `--asset-dir DIR` | `<temp>/fxc-djlink-bridge/port-<PORT>` | Folder for track asset files (emptied at start, removed at exit) |
 | `-l, --latency MS` | 20 | Accepted for compatibility |
 | `-B -a -b -c PORT` | | Accepted and ignored (FXCanvas bridges Ableton Link itself) |
 
@@ -46,9 +49,9 @@ players: device found messages for the players and a mixer (device 33),
 status, beats, the tempo master, metadata, phrases, positions and deck state.
 
 ```
-java -jar fxc-djlink-bridge-1.2.0.jar --simulate
-java -jar fxc-djlink-bridge-1.2.0.jar --sim-decks 3 --sim-track a --sim-track short --sim-speed 4
-java -jar fxc-djlink-bridge-1.2.0.jar --sim-track PIONEER/USBANLZ/P016/0000875E/ANLZ0000.EXT
+java -jar fxc-djlink-bridge-1.3.0.jar --simulate
+java -jar fxc-djlink-bridge-1.3.0.jar --sim-decks 3 --sim-track a --sim-track short --sim-speed 4
+java -jar fxc-djlink-bridge-1.3.0.jar --sim-track PIONEER/USBANLZ/P016/0000875E/ANLZ0000.EXT
 ```
 
 | Option | Default | Meaning |
@@ -61,7 +64,10 @@ java -jar fxc-djlink-bridge-1.2.0.jar --sim-track PIONEER/USBANLZ/P016/0000875E/
 | `--send "COMMAND"` | | Send a command to a running simulator on `-o PORT` and exit (repeatable) |
 
 Any `--sim-*` option implies `--simulate`. At start, player 1 plays as tempo
-master and on air; the others are cued at their first beat.
+master and on air; the others are cued at their first beat. Every loaded
+track also gets [track assets](#track-assets-since-130): a waveform shaped by
+its phrases (kicks on the beat, quiet breakdowns, kick-free fill-ins), a beat
+grid and generated cover art.
 
 **Tracks.** Built-in tracks have a constant tempo and a phrase structure:
 
@@ -76,7 +82,9 @@ master and on air; the others are cued at their first beat.
 Phrases are 16 bars unless noted; some end in a 2-bar fill-in. A real
 rekordbox analysis file also works: give the `ANLZ0000.EXT` or `ANLZ0000.DAT`
 from an exported USB stick (`PIONEER/USBANLZ/...`) and the other file in the
-same folder is read too. The track plays at its beat grid's first tempo.
+same folder is read too (including `ANLZ0000.2EX`, which holds the
+three-band waveforms), so the simulated deck sends that track's real
+waveforms. The track plays at its beat grid's first tempo.
 
 **Commands.** Type them on the bridge's stdin, put them in a script, send them
 with `--send`, or send OSC `/sim/<command> args...` to the bridge port. Deck
@@ -106,8 +114,8 @@ i playing, i looping, f tempo, i master`. `--send` exits with 0 when every
 command succeeded, 1 when one failed, and 2 when no simulator answered.
 
 ```
-java -jar fxc-djlink-bridge-1.2.0.jar --send "loop 1 8" --send state
-java -jar fxc-djlink-bridge-1.2.0.jar -o 17002 --send "bank 2 warm"
+java -jar fxc-djlink-bridge-1.3.0.jar --send "loop 1 8" --send state
+java -jar fxc-djlink-bridge-1.3.0.jar -o 17002 --send "bank 2 warm"
 ```
 
 A script example (`show.txt`), run with `--sim-script show.txt`:
@@ -186,6 +194,60 @@ of these change:
 - `looping`: 1 while a loop plays. Players that report loop bounds (CDJ-3000)
   also fill in `loopStartMs`, `loopEndMs` and `loopBeats`; others send 0.
 - `atEnd`: 1 when the player reached the end of the track.
+
+### Track assets (since 1.3.0)
+
+A detail waveform (150 segments a second, so about 54,000 for a six-minute
+track) does not fit in a UDP datagram, so the bridge writes waveforms, beat
+grids and album art to files in its asset folder and sends their paths. Files
+are written under a temporary name and renamed into place, so a file named in
+a message is complete. The two newest files per player and kind are kept;
+older ones are deleted.
+
+The bridge only asks the players for waveforms and art while a client streams
+`/waveforms` or `/art` (`stream`, `list` and `stop` as for every topic). The
+beat grid comes with `/waveforms`.
+
+| Message | Arguments |
+|---|---|
+| `/waveform/{device}` | `i trackId, s kind, s style, i bands, i segments, f segmentsPerSecond, i durationMs, s path` |
+| `/waveform/{device}/none` | `i trackId, s kind` |
+| `/beat-grid/{device}` | `i trackId, i beatCount, s path` |
+| `/beat-grid/{device}/none` | `i trackId` |
+| `/art/{device}` | `i trackId, i width, i height, s path` (JPEG) |
+| `/art/{device}/none` | `i trackId` |
+
+- `kind`: `preview` (the whole track in a few hundred to 1200 columns) or
+  `detail` (150 segments a second).
+- `style`: the waveform rekordbox exported: `three_band` (rekordbox 6.7+),
+  `rgb` or `blue`. The bridge asks for three-band first.
+- `segmentsPerSecond` and `durationMs` are 0 when unknown.
+
+Waveform file (`.fxwf`), little-endian:
+
+| Offset | Size | Field |
+|---|---|---|
+| 0 | 4 | `FXWF` |
+| 4 | 1 | version (1) |
+| 5 | 1 | kind: 0 preview, 1 detail |
+| 6 | 1 | style: 0 blue, 1 rgb, 2 three-band |
+| 7 | 1 | flags: bit 0 set when band levels are present |
+| 8 | 4 | u32 trackId |
+| 12 | 4 | u32 segment count |
+| 16 | 4 | f32 segments per second (0 = unknown) |
+| 20 | 4 | u32 duration in ms (0 = unknown) |
+| 24 | 4 per segment | u8 height, u8 low, u8 mid, u8 high |
+
+Every style is normalized to the same segments: an overall level and the
+levels of the low, mid and high bands on their own, all 0-255 on one scale
+where 255 is the loudest value in that waveform. Three-band waveforms carry
+real band levels, weighted the way the players draw them. RGB waveforms carry
+rekordbox's color channels (red = low, green = mid, blue = high). Blue
+waveforms have levels only (bands 0, flag clear).
+
+Beat grid file (`.fxbg`), little-endian: `FXBG`, u8 version (1), 3 reserved
+bytes, u32 trackId, u32 beat count, then 8 bytes per beat: u32 time in ms,
+u16 tempo in BPM x 100, u8 beat in bar (1-4), 1 reserved byte.
 
 Song structure extras that `/phrases` already carries: the rekordbox Lighting
 `bank` (style picked per track in rekordbox Lighting mode), the track `mood`,

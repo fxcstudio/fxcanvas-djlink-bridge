@@ -91,6 +91,47 @@ class BridgeStateTest {
     }
 
     @Test
+    void trackAssetsAreDemandDrivenAndReplayed() throws Exception {
+        List<String> demand = new java.util.ArrayList<>();
+        state.setDemandListener((topic, wanted) -> demand.add(topic + "=" + wanted));
+        studio.fxc.djlink.assets.WaveformData w = studio.fxc.djlink.assets.WaveformData.normalize(819,
+                studio.fxc.djlink.assets.WaveformData.Kind.DETAIL,
+                studio.fxc.djlink.assets.WaveformData.Style.THREE_BAND, 150f, 2000, null,
+                new float[]{1, 2}, new float[]{2, 1}, new float[]{0, 1});
+
+        // Nobody streams /waveforms yet: published to no one, but remembered.
+        out.clear();
+        state.waveform(2, w, "C:\\tmp\\p2-detail-1.fxwf");
+        state.beatGrid(2, 819, 64, "C:\\tmp\\p2-grid-2.fxbg");
+        state.art(2, 819, 240, 240, "C:\\tmp\\p2-art-3.jpg");
+        assertTrue(out.messages().isEmpty());
+
+        state.handle(OscMessage.of("/waveforms", "stream"), app);
+        state.handle(OscMessage.of("/art", "stream"), app);
+        assertEquals(List.of("/waveforms=true", "/art=true"), demand);
+        assertEquals(List.of(
+                OscMessage.of("/waveform/2", 819, "detail", "three_band", 1, 2, 150f, 2000, "C:\\tmp\\p2-detail-1.fxwf"),
+                OscMessage.of("/beat-grid/2", 819, 64, "C:\\tmp\\p2-grid-2.fxbg"),
+                OscMessage.of("/art/2", 819, 240, 240, "C:\\tmp\\p2-art-3.jpg")), out.messages());
+
+        // Streaming again (the app repeats its requests) is not new demand.
+        state.handle(OscMessage.of("/waveforms", "stream"), app);
+        assertEquals(2, demand.size());
+
+        out.clear();
+        state.waveformNone(2, 0, studio.fxc.djlink.assets.WaveformData.Kind.DETAIL);
+        state.artNone(2, 0);
+        assertEquals(List.of(OscMessage.of("/waveform/2/none", 0, "detail"), OscMessage.of("/art/2/none", 0)),
+                out.messages());
+        out.clear();
+        state.handle(OscMessage.of("/waveforms", "list"), app);
+        assertEquals(List.of(OscMessage.of("/beat-grid/2", 819, 64, "C:\\tmp\\p2-grid-2.fxbg")), out.messages());
+
+        state.handle(OscMessage.of("/waveforms", "stop"), app);
+        assertEquals("/waveforms=false", demand.get(2));
+    }
+
+    @Test
     void statusOnlyReportsChanges() {
         state.status(1, 120f, true, false, false);
         out.clear();

@@ -16,6 +16,8 @@ public final class Options {
     public boolean realPlayer = false;
     public int deviceNumber = 0;          // 0 = auto-assign
     public String logFile = null;
+    /** Folder for waveform, beat grid and art files; null for the default under the temp folder. */
+    public String assetDir = null;
     public boolean help = false;
     public boolean version = false;
     public final List<String> ignored = new ArrayList<>();
@@ -61,6 +63,9 @@ public final class Options {
                 case "-L":
                 case "--log-file":
                     o.logFile = stringValue(args, ++i, arg);
+                    break;
+                case "--asset-dir":
+                    o.assetDir = stringValue(args, ++i, arg);
                     break;
                 case "-h":
                 case "--help":
@@ -164,6 +169,8 @@ public final class Options {
                 + "  -d, --device-number NUM          Use a fixed device number (overrides -r)" + nl
                 + "  -l, --latency MS          20     Accepted for compatibility" + nl
                 + "  -L, --log-file PATH              Log to a file instead of stderr" + nl
+                + "  --asset-dir DIR                  Folder for waveform and album art files" + nl
+                + "                                   (default: <temp>/fxc-djlink-bridge/port-<PORT>)" + nl
                 + "  -V, --version                    Print the version and exit" + nl
                 + "  -h, --help                       Print this help and exit" + nl + nl
                 + "  -B, -a, -b, -c PORT              Accepted and ignored (Ableton Link is bridged by FXCanvas)" + nl + nl

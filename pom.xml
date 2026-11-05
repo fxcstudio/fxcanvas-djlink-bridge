@@ -6,7 +6,7 @@
 
   <groupId>studio.fxc</groupId>
   <artifactId>fxc-djlink-bridge</artifactId>
-  <version>1.2.0</version>
+  <version>1.3.0</version>
   <packaging>jar</packaging>
 
   <name>FXCanvas DJ Link Bridge</name>

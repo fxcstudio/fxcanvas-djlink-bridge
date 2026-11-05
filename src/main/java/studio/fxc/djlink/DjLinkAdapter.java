@@ -10,9 +10,18 @@ import org.deepsymmetry.beatlink.DeviceUpdate;
 import org.deepsymmetry.beatlink.MasterListener;
 import org.deepsymmetry.beatlink.Util;
 import org.deepsymmetry.beatlink.VirtualCdj;
+import org.deepsymmetry.beatlink.data.AlbumArt;
 import org.deepsymmetry.beatlink.data.AnalysisTagFinder;
 import org.deepsymmetry.beatlink.data.AnalysisTagUpdate;
+import org.deepsymmetry.beatlink.data.ArtFinder;
+import org.deepsymmetry.beatlink.data.BeatGrid;
 import org.deepsymmetry.beatlink.data.BeatGridFinder;
+import org.deepsymmetry.beatlink.data.WaveformDetail;
+import org.deepsymmetry.beatlink.data.WaveformDetailUpdate;
+import org.deepsymmetry.beatlink.data.WaveformFinder;
+import org.deepsymmetry.beatlink.data.WaveformListener;
+import org.deepsymmetry.beatlink.data.WaveformPreview;
+import org.deepsymmetry.beatlink.data.WaveformPreviewUpdate;
 import org.deepsymmetry.beatlink.data.CrateDigger;
 import org.deepsymmetry.beatlink.data.DeckReference;
 import org.deepsymmetry.beatlink.data.MetadataFinder;
@@ -24,15 +33,25 @@ import org.deepsymmetry.beatlink.data.TrackPositionUpdate;
 import org.deepsymmetry.cratedigger.pdb.RekordboxAnlz;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import studio.fxc.djlink.assets.AssetCodec;
+import studio.fxc.djlink.assets.AssetStore;
+import studio.fxc.djlink.assets.BeatGridData;
+import studio.fxc.djlink.assets.WaveformConverter;
+import studio.fxc.djlink.assets.WaveformData;
 import studio.fxc.djlink.model.DeckState;
 import studio.fxc.djlink.model.PhraseData;
 import studio.fxc.djlink.model.PositionData;
 import studio.fxc.djlink.model.TrackInfo;
 
+import java.awt.image.BufferedImage;
+import java.io.IOException;
+import java.nio.ByteBuffer;
 import java.util.Locale;
 import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.Executor;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
 
 /**
  * Connects beat-link to {@link BridgeState}.
@@ -61,10 +80,135 @@ public final class DjLinkAdapter {
     /** Track length per player, from metadata (written on a beat-link thread, read on others). */
     private final Map<Integer, Long> durationsMs = new ConcurrentHashMap<>();
 
-    public DjLinkAdapter(BridgeState state, Executor events, Options options) {
+    private final AssetStore assets;
+    /** Set from the event thread when a client starts or stops streaming /waveforms or /art. */
+    private volatile boolean wantWaveforms;
+    private volatile boolean wantArt;
+    /** Starts and stops the waveform and art finders, which can block on the network. */
+    private final ExecutorService demandWorker = Executors.newSingleThreadExecutor(r -> {
+        Thread t = new Thread(r, "asset-demand");
+        t.setDaemon(true);
+        return t;
+    });
+
+    public DjLinkAdapter(BridgeState state, Executor events, Options options, AssetStore assets) {
         this.state = state;
         this.events = events;
         this.options = options;
+        this.assets = assets;
+    }
+
+    /** {@link BridgeState.DemandListener}: called on the event thread. */
+    public void demandChanged(String topic, boolean wanted) {
+        if (BridgeState.WAVEFORMS.equals(topic)) wantWaveforms = wanted;
+        if (BridgeState.ART.equals(topic)) wantArt = wanted;
+        logger.info("{} {}", topic, wanted ? "requested: fetching from the players" : "no longer requested");
+        demandWorker.execute(this::applyDemand);
+    }
+
+    /** Start or stop the finders to match demand. Runs on the demand worker. */
+    private void applyDemand() {
+        if (!metadataFinder.isRunning()) return;   // ensureVirtualCdj() calls this again once it is
+        try {
+            WaveformFinder waveforms = WaveformFinder.getInstance();
+            if (wantWaveforms && !waveforms.isRunning()) {
+                waveforms.setPreferredStyle(WaveformFinder.WaveformStyle.THREE_BAND);
+                waveforms.setFindDetails(true);
+                waveforms.start();
+                // Beat grids are always loaded (positions need them): send the current ones.
+                for (int player = 1; player <= BridgeState.MAX_PLAYER; player++) {
+                    BeatGrid grid = BeatGridFinder.getInstance().getLatestBeatGridFor(player);
+                    if (grid != null) onBeatGrid(player, grid);
+                }
+            } else if (!wantWaveforms && waveforms.isRunning()) {
+                waveforms.stop();
+            }
+            ArtFinder art = ArtFinder.getInstance();
+            if (wantArt && !art.isRunning()) {
+                art.setRequestHighResolutionArt(true);
+                art.start();
+            } else if (!wantArt && art.isRunning()) {
+                art.stop();
+            }
+        } catch (Throwable t) {
+            logger.error("Problem starting the waveform or album art finder", t);
+        }
+    }
+
+    private void onPreview(int player, WaveformPreview preview) {
+        if (!wantWaveforms) return;
+        if (preview == null) {
+            final int trackId = statusTrackId(player);
+            events.execute(() -> state.waveformNone(player, trackId, WaveformData.Kind.PREVIEW));
+            return;
+        }
+        try {
+            final int trackId = preview.dataReference.rekordboxId;
+            final WaveformData data = WaveformConverter.fromPreview(preview, trackId,
+                    durationsMs.getOrDefault(player, 0L));
+            publishWaveform(player, data);
+        } catch (IOException | RuntimeException e) {
+            logger.warn("Unable to export the waveform preview for player {}", player, e);
+        }
+    }
+
+    private void onDetail(int player, WaveformDetail detail) {
+        if (!wantWaveforms) return;
+        if (detail == null) {
+            final int trackId = statusTrackId(player);
+            events.execute(() -> state.waveformNone(player, trackId, WaveformData.Kind.DETAIL));
+            return;
+        }
+        try {
+            publishWaveform(player, WaveformConverter.fromDetail(detail, detail.dataReference.rekordboxId));
+        } catch (IOException | RuntimeException e) {
+            logger.warn("Unable to export the waveform detail for player {}", player, e);
+        }
+    }
+
+    private void publishWaveform(int player, WaveformData data) throws IOException {
+        final String path = assets.write("p" + player + "-" + data.kind.oscName(), "fxwf",
+                AssetCodec.encode(data)).toString();
+        events.execute(() -> state.waveform(player, data, path));
+    }
+
+    private void onBeatGrid(int player, BeatGrid grid) {
+        if (!wantWaveforms) return;
+        if (grid == null) {
+            final int trackId = statusTrackId(player);
+            events.execute(() -> state.beatGridNone(player, trackId));
+            return;
+        }
+        try {
+            final int trackId = grid.dataReference == null ? statusTrackId(player) : grid.dataReference.rekordboxId;
+            final BeatGridData data = WaveformConverter.fromBeatGrid(grid, trackId);
+            final String path = assets.write("p" + player + "-grid", "fxbg", AssetCodec.encode(data)).toString();
+            events.execute(() -> state.beatGrid(player, trackId, data.beatCount(), path));
+        } catch (IOException | RuntimeException e) {
+            logger.warn("Unable to export the beat grid for player {}", player, e);
+        }
+    }
+
+    private void onArt(int player, AlbumArt art) {
+        if (!wantArt) return;
+        if (art == null) {
+            final int trackId = statusTrackId(player);
+            events.execute(() -> state.artNone(player, trackId));
+            return;
+        }
+        try {
+            final int trackId = art.artReference.rekordboxId;
+            final ByteBuffer raw = art.getRawBytes();
+            final byte[] bytes = new byte[raw.remaining()];
+            raw.get(bytes);
+            final BufferedImage image = art.getImage();
+            final int width = image == null ? 0 : image.getWidth();
+            final int height = image == null ? 0 : image.getHeight();
+            final String path = assets.write("p" + player + "-art", "jpg", bytes).toString();
+            events.execute(() -> state.art(player, trackId, width, height, path));
+        } catch (IOException | RuntimeException e) {
+            logger.warn("Unable to export the album art for player {}", player, e);
+        }
     }
 
     public void start() throws Exception {
@@ -151,12 +295,31 @@ public final class DjLinkAdapter {
             TimeFinder.getInstance().addTrackPositionListener(player, new PositionListener(player));
         }
 
+        // Track assets. The listeners are always in place; the waveform and art
+        // finders only run while a client streams /waveforms or /art.
+        WaveformFinder.getInstance().addWaveformListener(new WaveformListener() {
+            @Override
+            public void previewChanged(WaveformPreviewUpdate update) {
+                onPreview(update.player, update.preview);
+            }
+
+            @Override
+            public void detailChanged(WaveformDetailUpdate update) {
+                onDetail(update.player, update.detail);
+            }
+        });
+        BeatGridFinder.getInstance().addBeatGridListener(update -> onBeatGrid(update.player, update.beatGrid));
+        ArtFinder.getInstance().addAlbumArtListener(update -> onArt(update.player, update.art));
+
         beatFinder.start();
         deviceFinder.start();
         logger.info("Waiting for Pro DJ Link devices...");
     }
 
     public void stop() {
+        demandWorker.shutdownNow();
+        WaveformFinder.getInstance().stop();
+        ArtFinder.getInstance().stop();
         TimeFinder.getInstance().stop();
         AnalysisTagFinder.getInstance().stop();
         BeatGridFinder.getInstance().stop();
@@ -189,6 +352,7 @@ public final class DjLinkAdapter {
                     BeatGridFinder.getInstance().start();
                     AnalysisTagFinder.getInstance().start();
                     TimeFinder.getInstance().start();
+                    demandWorker.execute(DjLinkAdapter.this::applyDemand);
                 } catch (Throwable t) {
                     logger.error("Problem starting the virtual player", t);
                 }

@@ -1,5 +1,6 @@
 package studio.fxc.djlink.sim;
 
+import studio.fxc.djlink.assets.WaveformData;
 import studio.fxc.djlink.model.PhraseData;
 
 import java.util.ArrayList;
@@ -22,9 +23,17 @@ public final class SimTrack {
     public final int beatCount;
     /** Song structure, or null for a track without phrase analysis. */
     public final PhraseData phrases;
+    /** Waveforms read from a real analysis file, or null to generate them ({@link SimAssets}). */
+    public final WaveformData realPreview;
+    public final WaveformData realDetail;
 
     public SimTrack(int trackId, String title, String artist, float bpm, long firstBeatMs, int beatCount,
                     PhraseData phrases) {
+        this(trackId, title, artist, bpm, firstBeatMs, beatCount, phrases, null, null);
+    }
+
+    public SimTrack(int trackId, String title, String artist, float bpm, long firstBeatMs, int beatCount,
+                    PhraseData phrases, WaveformData realPreview, WaveformData realDetail) {
         if (bpm <= 0) throw new IllegalArgumentException("bpm must be positive");
         if (beatCount < 1) throw new IllegalArgumentException("beatCount must be at least 1");
         this.trackId = trackId;
@@ -34,6 +43,8 @@ public final class SimTrack {
         this.firstBeatMs = Math.max(0, firstBeatMs);
         this.beatCount = beatCount;
         this.phrases = phrases;
+        this.realPreview = realPreview;
+        this.realDetail = realDetail;
     }
 
     /** Milliseconds into the track at a (0-based, fractional) beat position. */
@@ -49,7 +60,8 @@ public final class SimTrack {
     public SimTrack withBank(String bank) {
         if (phrases == null) return this;
         return new SimTrack(trackId, title, artist, bpm, firstBeatMs, beatCount,
-                new PhraseData(phrases.trackId, phrases.mood, bank, phrases.endBeat, phrases.entries));
+                new PhraseData(phrases.trackId, phrases.mood, bank, phrases.endBeat, phrases.entries),
+                realPreview, realDetail);
     }
 
     // =========================================================================

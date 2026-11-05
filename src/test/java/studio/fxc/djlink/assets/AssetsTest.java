@@ -167,8 +167,14 @@ class AssetsTest {
             assertTrue(files.noneMatch(p -> p.toString().endsWith(".tmp")));
         }
 
+        // A label (the waveform style) goes in the name; cleanup still counts per key.
+        Path rgb = store.write("p1-detail", "rgb", "fxwf", new byte[]{4});
+        assertTrue(rgb.getFileName().toString().startsWith("p1-detail-rgb-"), rgb.toString());
+        assertFalse(Files.exists(b));
+        assertTrue(Files.exists(c) && Files.exists(rgb));
+
         store.forget("p1-detail");
-        assertFalse(Files.exists(b) || Files.exists(c));
+        assertFalse(Files.exists(c) || Files.exists(rgb));
         store.close();
         assertFalse(Files.exists(dir));
     }

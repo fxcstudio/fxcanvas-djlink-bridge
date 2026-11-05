@@ -52,6 +52,7 @@ import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.Executor;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
+import java.util.concurrent.TimeUnit;
 
 /**
  * Connects beat-link to {@link BridgeState}.
@@ -88,6 +89,15 @@ public final class DjLinkAdapter {
     /** Set from the event thread when a client starts or stops streaming /waveforms or /art. */
     private volatile boolean wantWaveforms;
     private volatile boolean wantArt;
+    /** The waveform style clients asked for; set from the event thread. */
+    private volatile WaveformFinder.WaveformStyle preferredStyle = finderStyle(BridgeState.DEFAULT_WAVEFORM_STYLE);
+    /**
+     * When the style last changed. beat-link drops its cached waveforms on a
+     * change and reports them as gone before it delivers the new ones; the
+     * bridge does not pass those reports on for a loaded track.
+     */
+    private volatile long styleChangedNanos = Long.MIN_VALUE;
+    static final long STYLE_SWITCH_GRACE_NANOS = TimeUnit.SECONDS.toNanos(10);
     /** Starts and stops the waveform and art finders, which can block on the network. */
     private final ExecutorService demandWorker = Executors.newSingleThreadExecutor(r -> {
         Thread t = new Thread(r, "asset-demand");
@@ -110,13 +120,50 @@ public final class DjLinkAdapter {
         demandWorker.execute(this::applyDemand);
     }
 
+    /** {@link BridgeState.WaveformStyleListener}: called on the event thread. */
+    public void waveformStyleChanged(WaveformData.Style style) {
+        preferredStyle = finderStyle(style);
+        demandWorker.execute(this::applyStyle);
+    }
+
+    static WaveformFinder.WaveformStyle finderStyle(WaveformData.Style style) {
+        switch (style) {
+            case RGB: return WaveformFinder.WaveformStyle.RGB;
+            case BLUE: return WaveformFinder.WaveformStyle.BLUE;
+            default: return WaveformFinder.WaveformStyle.THREE_BAND;
+        }
+    }
+
+    /**
+     * Apply a new style while the waveform finder runs. beat-link then drops
+     * its cached waveforms and fetches every loaded track's waveforms again,
+     * which reach {@link #onPreview} and {@link #onDetail} as usual. Runs on
+     * the demand worker.
+     */
+    private void applyStyle() {
+        try {
+            WaveformFinder waveforms = WaveformFinder.getInstance();
+            if (!waveforms.isRunning() || waveforms.getPreferredStyle() == preferredStyle) return;
+            logger.info("Fetching waveforms again in the {} style", preferredStyle);
+            styleChangedNanos = System.nanoTime();
+            waveforms.setPreferredStyle(preferredStyle);
+        } catch (Throwable t) {
+            logger.error("Problem changing the waveform style", t);
+        }
+    }
+
+    /** True for a "waveform gone" report caused by a style change while the track is still loaded. */
+    private boolean droppedForStyleChange(int player) {
+        return System.nanoTime() - styleChangedNanos < STYLE_SWITCH_GRACE_NANOS && statusTrackId(player) != 0;
+    }
+
     /** Start or stop the finders to match demand. Runs on the demand worker. */
     private void applyDemand() {
         if (!metadataFinder.isRunning()) return;   // ensureVirtualCdj() calls this again once it is
         try {
             WaveformFinder waveforms = WaveformFinder.getInstance();
             if (wantWaveforms && !waveforms.isRunning()) {
-                waveforms.setPreferredStyle(WaveformFinder.WaveformStyle.THREE_BAND);
+                waveforms.setPreferredStyle(preferredStyle);
                 waveforms.setFindDetails(true);
                 waveforms.start();
                 // Beat grids are always loaded (positions need them): send the current ones.
@@ -142,6 +189,7 @@ public final class DjLinkAdapter {
     private void onPreview(int player, WaveformPreview preview) {
         if (!wantWaveforms) return;
         if (preview == null) {
+            if (droppedForStyleChange(player)) return;
             final int trackId = statusTrackId(player);
             events.execute(() -> state.waveformNone(player, trackId, WaveformData.Kind.PREVIEW));
             return;
@@ -159,6 +207,7 @@ public final class DjLinkAdapter {
     private void onDetail(int player, WaveformDetail detail) {
         if (!wantWaveforms) return;
         if (detail == null) {
+            if (droppedForStyleChange(player)) return;
             final int trackId = statusTrackId(player);
             events.execute(() -> state.waveformNone(player, trackId, WaveformData.Kind.DETAIL));
             return;
@@ -171,7 +220,7 @@ public final class DjLinkAdapter {
     }
 
     private void publishWaveform(int player, WaveformData data) throws IOException {
-        final String path = assets.write("p" + player + "-" + data.kind.oscName(), "fxwf",
+        final String path = assets.write("p" + player + "-" + data.kind.oscName(), data.style.oscName(), "fxwf",
                 AssetCodec.encode(data)).toString();
         events.execute(() -> state.waveform(player, data, path));
     }

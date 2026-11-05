@@ -81,6 +81,8 @@ public final class Simulator {
     private final Outbox outbox;
     private final AssetStore assets;
     private final List<Deck> decks = new ArrayList<>();
+    /** The waveform style clients asked for (see {@link #waveformStyleChanged}). */
+    private WaveformData.Style waveformStyle = BridgeState.DEFAULT_WAVEFORM_STYLE;
     private final double speed;
     private final Consumer<String> console;
     private int master = -1;
@@ -290,11 +292,7 @@ public final class Simulator {
             BeatGridData grid = SimAssets.beatGrid(track);
             state.beatGrid(player, track.trackId, grid.beatCount(),
                     assets.write(p + "-grid", "fxbg", AssetCodec.encode(grid)).toString());
-            WaveformData detail = track.realDetail != null ? track.realDetail : SimAssets.detail(track);
-            state.waveform(player, detail, assets.write(p + "-detail", "fxwf", AssetCodec.encode(detail)).toString());
-            WaveformData preview = track.realPreview != null ? track.realPreview : SimAssets.preview(track, detail);
-            state.waveform(player, preview,
-                    assets.write(p + "-preview", "fxwf", AssetCodec.encode(preview)).toString());
+            sendWaveforms(player, track);
             sendArt(player, track);
         } catch (IOException | RuntimeException e) {
             logger.warn("Unable to write simulated track assets for deck {}", player, e);
@@ -371,6 +369,39 @@ public final class Simulator {
     // =========================================================================
     // Commands
     // =========================================================================
+
+    /**
+     * Preview and detail waveforms in the requested style. Like the players,
+     * a track without that style falls back to blue (then to what it has);
+     * the message names the style actually sent.
+     */
+    private void sendWaveforms(int player, SimTrack track) throws IOException {
+        final String p = "p" + player;
+        WaveformData detail = track.realDetail(waveformStyle);
+        if (detail == null) detail = SimAssets.restyle(SimAssets.detail(track), waveformStyle);
+        state.waveform(player, detail, assets.write(p + "-detail", detail.style.oscName(), "fxwf",
+                AssetCodec.encode(detail)).toString());
+        WaveformData preview = track.realPreview(waveformStyle);
+        if (preview == null) {
+            preview = SimAssets.restyle(SimAssets.preview(track, SimAssets.detail(track)), waveformStyle);
+        }
+        state.waveform(player, preview, assets.write(p + "-preview", preview.style.oscName(), "fxwf",
+                AssetCodec.encode(preview)).toString());
+    }
+
+    /** {@link BridgeState.WaveformStyleListener}: resend every loaded deck's waveforms in the new style. */
+    public void waveformStyleChanged(WaveformData.Style style) {
+        waveformStyle = style;
+        if (assets == null) return;
+        for (Deck deck : decks) {
+            if (deck.track == null) continue;
+            try {
+                sendWaveforms(deck.number, deck.track);
+            } catch (IOException | RuntimeException e) {
+                logger.warn("Unable to write simulated waveforms for deck {}", deck.number, e);
+            }
+        }
+    }
 
     /** OSC handler for {@code /sim/*}; replies go to the sender's response port and the console. */
     public void handle(OscMessage msg, ResponseRoute route) {

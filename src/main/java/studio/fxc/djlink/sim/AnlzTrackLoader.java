@@ -16,6 +16,7 @@ import studio.fxc.djlink.model.PhraseData;
 import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.util.EnumMap;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
@@ -29,7 +30,8 @@ import java.util.Map;
  *
  * Give any one of them: the others in the same folder are read too. The track
  * plays at the beat grid's first tempo (the simulator keeps tempo constant).
- * The best waveform style present is used: three-band, then color, then blue.
+ * Every waveform style present is read (three-band, color, blue), so the
+ * simulator can serve the style a client asks for.
  */
 public final class AnlzTrackLoader {
     private static final Logger logger = LoggerFactory.getLogger(AnlzTrackLoader.class);
@@ -91,12 +93,15 @@ public final class AnlzTrackLoader {
                 phrases);
 
         DataReference ref = new DataReference(1, CdjStatus.TrackSourceSlot.USB_SLOT, trackId);
-        WaveformData detail = readDetail(files, ref, trackId);
-        WaveformData preview = readPreview(files, ref, trackId, plain.durationMs());
-        return new SimTrack(trackId, plain.title, plain.artist, bpm, firstBeatMs, beatCount, phrases, preview, detail);
+        Map<WaveformData.Style, WaveformData> details = readDetails(files, ref, trackId);
+        Map<WaveformData.Style, WaveformData> previews = readPreviews(files, ref, trackId, plain.durationMs());
+        return new SimTrack(trackId, plain.title, plain.artist, bpm, firstBeatMs, beatCount, phrases, previews,
+                details, null);
     }
 
-    private static WaveformData readDetail(Map<String, RekordboxAnlz> files, DataReference ref, int trackId) {
+    private static Map<WaveformData.Style, WaveformData> readDetails(Map<String, RekordboxAnlz> files,
+                                                                     DataReference ref, int trackId) {
+        Map<WaveformData.Style, WaveformData> out = new EnumMap<>(WaveformData.Style.class);
         Object[][] attempts = {
                 {"2EX", WaveformFinder.WaveformStyle.THREE_BAND},
                 {"EXT", WaveformFinder.WaveformStyle.RGB},
@@ -107,16 +112,21 @@ public final class AnlzTrackLoader {
             if (anlz == null) continue;
             try {
                 WaveformDetail d = new WaveformDetail(ref, anlz, (WaveformFinder.WaveformStyle) a[1]);
-                if (d.getFrameCount() > 0) return WaveformConverter.fromDetail(d, trackId);
+                if (d.getFrameCount() > 0) {
+                    WaveformData w = WaveformConverter.fromDetail(d, trackId);
+                    out.putIfAbsent(w.style, w);
+                }
             } catch (RuntimeException e) {
                 logger.debug("No {} detail waveform in the {} file: {}", a[1], a[0], e.getMessage());
             }
         }
-        return null;
+        return out;
     }
 
-    private static WaveformData readPreview(Map<String, RekordboxAnlz> files, DataReference ref, int trackId,
-                                            long durationMs) {
+    private static Map<WaveformData.Style, WaveformData> readPreviews(Map<String, RekordboxAnlz> files,
+                                                                      DataReference ref, int trackId,
+                                                                      long durationMs) {
+        Map<WaveformData.Style, WaveformData> out = new EnumMap<>(WaveformData.Style.class);
         Object[][] attempts = {
                 {"2EX", WaveformFinder.WaveformStyle.THREE_BAND},
                 {"EXT", WaveformFinder.WaveformStyle.RGB},
@@ -127,11 +137,14 @@ public final class AnlzTrackLoader {
             if (anlz == null) continue;
             try {
                 WaveformPreview p = new WaveformPreview(ref, anlz, (WaveformFinder.WaveformStyle) a[1]);
-                if (p.segmentCount > 0) return WaveformConverter.fromPreview(p, trackId, durationMs);
+                if (p.segmentCount > 0) {
+                    WaveformData w = WaveformConverter.fromPreview(p, trackId, durationMs);
+                    out.putIfAbsent(w.style, w);
+                }
             } catch (RuntimeException e) {
                 logger.debug("No {} preview waveform in the {} file: {}", a[1], a[0], e.getMessage());
             }
         }
-        return null;
+        return out;
     }
 }

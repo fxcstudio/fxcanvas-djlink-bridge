@@ -5,8 +5,11 @@ import studio.fxc.djlink.model.PhraseData;
 
 import java.nio.file.Path;
 import java.util.ArrayList;
+import java.util.Collections;
+import java.util.EnumMap;
 import java.util.List;
 import java.util.Locale;
+import java.util.Map;
 
 /**
  * A track a simulated deck can play: a constant-tempo beat grid and, unless it
@@ -24,9 +27,15 @@ public final class SimTrack {
     public final int beatCount;
     /** Song structure, or null for a track without phrase analysis. */
     public final PhraseData phrases;
-    /** Waveforms read from a real analysis file, or null to generate them ({@link SimAssets}). */
+    /**
+     * Waveforms read from a real analysis file, the best style present, or
+     * null to generate them ({@link SimAssets}).
+     */
     public final WaveformData realPreview;
     public final WaveformData realDetail;
+    /** Every waveform style read from the analysis files (empty for generated tracks). */
+    private final Map<WaveformData.Style, WaveformData> realPreviews;
+    private final Map<WaveformData.Style, WaveformData> realDetails;
     /** A cover image file (JPEG or PNG) to send as album art, or null to generate one. */
     public final Path artFile;
 
@@ -42,6 +51,14 @@ public final class SimTrack {
 
     public SimTrack(int trackId, String title, String artist, float bpm, long firstBeatMs, int beatCount,
                     PhraseData phrases, WaveformData realPreview, WaveformData realDetail, Path artFile) {
+        this(trackId, title, artist, bpm, firstBeatMs, beatCount, phrases, byStyle(realPreview),
+                byStyle(realDetail), artFile);
+    }
+
+    /** A track with every waveform style read from its analysis files. */
+    public SimTrack(int trackId, String title, String artist, float bpm, long firstBeatMs, int beatCount,
+                    PhraseData phrases, Map<WaveformData.Style, WaveformData> realPreviews,
+                    Map<WaveformData.Style, WaveformData> realDetails, Path artFile) {
         if (bpm <= 0) throw new IllegalArgumentException("bpm must be positive");
         if (beatCount < 1) throw new IllegalArgumentException("beatCount must be at least 1");
         this.trackId = trackId;
@@ -51,21 +68,63 @@ public final class SimTrack {
         this.firstBeatMs = Math.max(0, firstBeatMs);
         this.beatCount = beatCount;
         this.phrases = phrases;
-        this.realPreview = realPreview;
-        this.realDetail = realDetail;
+        this.realPreviews = copy(realPreviews);
+        this.realDetails = copy(realDetails);
+        this.realPreview = best(this.realPreviews);
+        this.realDetail = best(this.realDetails);
         this.artFile = artFile;
+    }
+
+    /**
+     * The real preview in the {@code preferred} style. Falls back as the
+     * players do: to blue, then to any style read. Null for generated tracks.
+     */
+    public WaveformData realPreview(WaveformData.Style preferred) {
+        return pick(realPreviews, preferred);
+    }
+
+    /** The real detail waveform in the {@code preferred} style; see {@link #realPreview(WaveformData.Style)}. */
+    public WaveformData realDetail(WaveformData.Style preferred) {
+        return pick(realDetails, preferred);
+    }
+
+    private static WaveformData pick(Map<WaveformData.Style, WaveformData> byStyle, WaveformData.Style preferred) {
+        WaveformData w = byStyle.get(preferred);
+        if (w == null) w = byStyle.get(WaveformData.Style.BLUE);
+        return w != null ? w : best(byStyle);
+    }
+
+    private static WaveformData best(Map<WaveformData.Style, WaveformData> byStyle) {
+        for (WaveformData.Style s : new WaveformData.Style[]{
+                WaveformData.Style.THREE_BAND, WaveformData.Style.RGB, WaveformData.Style.BLUE}) {
+            WaveformData w = byStyle.get(s);
+            if (w != null) return w;
+        }
+        return null;
+    }
+
+    private static Map<WaveformData.Style, WaveformData> byStyle(WaveformData w) {
+        Map<WaveformData.Style, WaveformData> m = new EnumMap<>(WaveformData.Style.class);
+        if (w != null) m.put(w.style, w);
+        return m;
+    }
+
+    private static Map<WaveformData.Style, WaveformData> copy(Map<WaveformData.Style, WaveformData> m) {
+        Map<WaveformData.Style, WaveformData> out = new EnumMap<>(WaveformData.Style.class);
+        if (m != null) out.putAll(m);
+        return Collections.unmodifiableMap(out);
     }
 
     /** The same track under another title and artist. */
     public SimTrack withInfo(String newTitle, String newArtist) {
-        return new SimTrack(trackId, newTitle, newArtist, bpm, firstBeatMs, beatCount, phrases, realPreview,
-                realDetail, artFile);
+        return new SimTrack(trackId, newTitle, newArtist, bpm, firstBeatMs, beatCount, phrases, realPreviews,
+                realDetails, artFile);
     }
 
     /** The same track with a cover image file as its album art. */
     public SimTrack withArt(Path file) {
-        return new SimTrack(trackId, title, artist, bpm, firstBeatMs, beatCount, phrases, realPreview, realDetail,
-                file);
+        return new SimTrack(trackId, title, artist, bpm, firstBeatMs, beatCount, phrases, realPreviews,
+                realDetails, file);
     }
 
     /** Milliseconds into the track at a (0-based, fractional) beat position. */
@@ -82,7 +141,7 @@ public final class SimTrack {
         if (phrases == null) return this;
         return new SimTrack(trackId, title, artist, bpm, firstBeatMs, beatCount,
                 new PhraseData(phrases.trackId, phrases.mood, bank, phrases.endBeat, phrases.entries),
-                realPreview, realDetail, artFile);
+                realPreviews, realDetails, artFile);
     }
 
     // =========================================================================

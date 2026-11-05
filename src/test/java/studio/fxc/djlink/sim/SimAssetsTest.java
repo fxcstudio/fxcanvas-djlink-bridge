@@ -131,4 +131,68 @@ class SimAssetsTest {
             assertArrayEquals(Files.readAllBytes(cover), Files.readAllBytes(Paths.get((String) art.arg(3))));
         }
     }
+
+    @Test
+    void simulatorResendsWaveformsInTheRequestedStyle() throws Exception {
+        List<OscMessage> sent = new ArrayList<>();
+        BridgeState state = new BridgeState((to, m) -> sent.add(m));
+        ResponseRoute app = new ResponseRoute(InetAddress.getByName("127.0.0.1"), 50123);
+        state.handle(OscMessage.of("/waveforms", "stream"), app);
+        Path assetDir = dir.resolve("styles");
+        try (AssetStore store = new AssetStore(assetDir)) {
+            Simulator sim = new Simulator(state, (to, m) -> sent.add(m), 2, 1.0, s -> { }, store);
+            state.setWaveformStyleListener(sim::waveformStyleChanged);
+            sim.start(0, List.of());
+            assertEquals(List.of("three_band"), styles(sent), "three-band until a client asks");
+
+            for (String[] c : new String[][]{{"rgb", "rgb"}, {"blue", "blue"}, {"3band", "three_band"}}) {
+                sent.clear();
+                state.handle(OscMessage.of("/waveforms", "style", c[0]), app);
+                List<OscMessage> waveforms = sent.stream().filter(m -> m.address().startsWith("/waveform/"))
+                        .collect(Collectors.toList());
+                // Preview and detail for both loaded decks, without reloading anything.
+                assertEquals(4, waveforms.size(), c[0] + ": " + waveforms);
+                assertTrue(sent.stream().noneMatch(m -> m.address().endsWith("/none")), sent.toString());
+                assertTrue(sent.stream().noneMatch(m -> m.address().startsWith("/beat-grid/")));
+                assertEquals(List.of(c[1]), styles(sent));
+                for (OscMessage m : waveforms) {
+                    Path file = Paths.get((String) m.arg(7));
+                    assertTrue(file.getFileName().toString().contains("-" + c[1] + "-"), file.toString());
+                    WaveformData w = AssetCodec.decodeWaveform(Files.readAllBytes(file));
+                    assertEquals(c[1], w.style.oscName());
+                    assertEquals(c[1].equals("blue") ? 0 : 1, m.intArg(3), "bands flag");
+                }
+            }
+            // The usual cleanup: at most two files per player and kind, whatever their style.
+            try (var files = Files.list(assetDir)) {
+                assertEquals(2, files.filter(f -> f.getFileName().toString().startsWith("p1-detail-")).count());
+            }
+        }
+    }
+
+    private static List<String> styles(List<OscMessage> sent) {
+        return sent.stream().filter(m -> m.address().startsWith("/waveform/") && !m.address().endsWith("/none"))
+                .map(m -> (String) m.arg(2)).distinct().collect(Collectors.toList());
+    }
+
+    @Test
+    void realTrackFallsBackLikeThePlayers() {
+        WaveformData rgb = WaveformData.normalize(5, WaveformData.Kind.DETAIL, WaveformData.Style.RGB, 150f, 1000,
+                null, new float[]{1f}, new float[]{1f}, new float[]{1f});
+        WaveformData blue = WaveformData.normalize(5, WaveformData.Kind.DETAIL, WaveformData.Style.BLUE, 150f, 1000,
+                new float[]{1f}, null, null, null);
+        java.util.Map<WaveformData.Style, WaveformData> both = new java.util.EnumMap<>(WaveformData.Style.class);
+        both.put(WaveformData.Style.RGB, rgb);
+        both.put(WaveformData.Style.BLUE, blue);
+        SimTrack t = new SimTrack(5, "t", "a", 120f, 0, 8, null, both, both, null);
+        assertEquals(WaveformData.Style.RGB, t.realDetail(WaveformData.Style.RGB).style);
+        // No three-band data: blue, as a player sends.
+        assertEquals(WaveformData.Style.BLUE, t.realDetail(WaveformData.Style.THREE_BAND).style);
+        assertEquals(WaveformData.Style.RGB, t.realDetail.style, "best style present");
+        // Only RGB: whatever there is.
+        SimTrack rgbOnly = new SimTrack(5, "t", "a", 120f, 0, 8, null, null, rgb);
+        assertEquals(WaveformData.Style.RGB, rgbOnly.realDetail(WaveformData.Style.THREE_BAND).style);
+        // Generated tracks have none.
+        assertEquals(null, SimTrack.builtIn("a").realDetail(WaveformData.Style.RGB));
+    }
 }

@@ -11,6 +11,13 @@
   number above 4. The CDJ-3000X exports an encrypted database that the bridge
   cannot read that way. If an older player joins the network, the bridge goes
   back to reading the exported files.
+- New command `/waveforms style NAME` (`3band`, `rgb` or `blue`) picks the
+  waveform style, so FXCanvas can show the same waveform as the players.
+  The bridge fetches the waveforms of the loaded tracks again in the new
+  style. A track without that style gets its blue waveform, and the
+  `/waveform` message names the style actually sent. Three-band stays the
+  default, so clients that do not send the command see no change. Waveform
+  file names now contain the style. The simulator serves all three styles.
 - An emergency loop (the player lost its media and loops what it has buffered)
   now counts as looping on `/deck`. The play state is `emergency_loop`.
 - The bridge does not read the encrypted SQLite export database of the

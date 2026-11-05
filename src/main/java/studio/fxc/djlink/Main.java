@@ -105,6 +105,7 @@ public final class Main {
                 System.exit(1);
                 return;
             }
+            state.setWaveformStyleListener(sim::waveformStyleChanged);
             server.setFallback((msg, route) -> {
                 if (msg.address().startsWith("/sim/")) {
                     sim.handle(msg, route);
@@ -124,6 +125,7 @@ public final class Main {
             server.setFallback(state::handle);
             adapter = new DjLinkAdapter(state, events, options, assets);
             state.setDemandListener(adapter::demandChanged);
+            state.setWaveformStyleListener(adapter::waveformStyleChanged);
             adapter.start();
         }
         server.start();

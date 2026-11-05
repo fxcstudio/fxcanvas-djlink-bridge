@@ -211,6 +211,23 @@ The bridge only asks the players for waveforms and art while a client streams
 `/waveforms` or `/art` (`stream`, `list` and `stop` as for every topic). The
 beat grid comes with `/waveforms`.
 
+**Waveform style (since 1.4.0).** Send `/waveforms s "style", s NAME` to pick
+the style the bridge asks the players for, for example to match the waveform
+mode set on the players:
+
+| NAME | Style |
+|---|---|
+| `3band` (or `three_band`) | Three-band, as CDJ-3000 players show by default. The default until a client sends this command |
+| `rgb` | RGB (color), as NXS2 players and CDJ-3000 players in RGB mode show |
+| `blue` | Blue, the oldest style |
+
+The style applies to every client and stays until the next command or a
+restart. When it changes, the bridge fetches the waveforms of every loaded
+track again and sends new `/waveform/{device}` messages; no track reload is
+needed. The beat grid is not sent again. An unknown NAME answers `/error`
+and changes nothing. The command is not a subscription: it does not start or
+stop `/waveforms` streaming.
+
 | Message | Arguments |
 |---|---|
 | `/waveform/{device}` | `i trackId, s kind, s style, i bands, i segments, f segmentsPerSecond, i durationMs, s path` |
@@ -222,8 +239,14 @@ beat grid comes with `/waveforms`.
 
 - `kind`: `preview` (the whole track in a few hundred to 1200 columns) or
   `detail` (150 segments a second).
-- `style`: the waveform rekordbox exported: `three_band` (rekordbox 6.7+),
-  `rgb` or `blue`. The bridge asks for three-band first.
+- `style`: the style actually sent: `three_band` (rekordbox 6.7+), `rgb` or
+  `blue`. It can differ from the requested style. Like the players, when a
+  track has no waveform of the requested style, the bridge sends its blue
+  waveform. `/waveform/{device}/none` means the track has no waveform at all.
+  The file name also contains the style, for example `p2-detail-rgb-41.fxwf`.
+  With `blue`, the detail waveform often still arrives as `rgb`: beat-link
+  reads the detail from the media's analysis files and takes the color
+  version there. The preview is blue.
 - `segmentsPerSecond` and `durationMs` are 0 when unknown.
 
 Waveform file (`.fxwf`), little-endian:

@@ -15,6 +15,7 @@ import studio.fxc.djlink.osc.Subscriptions;
 import java.net.InetSocketAddress;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
 import java.util.Objects;
 import java.util.TreeMap;
@@ -59,6 +60,14 @@ public final class BridgeState {
         void demandChanged(String topic, boolean wanted);
     }
 
+    /** Told when a client picks another waveform style with {@code /waveforms style <name>}. */
+    public interface WaveformStyleListener {
+        void waveformStyleChanged(WaveformData.Style style);
+    }
+
+    /** The style the bridge asks for until a client picks one. */
+    public static final WaveformData.Style DEFAULT_WAVEFORM_STYLE = WaveformData.Style.THREE_BAND;
+
     /** Highest player number that is a deck (CDJ-3000 and DJM-V10 setups use 1-6). */
     public static final int MAX_PLAYER = 6;
 
@@ -90,6 +99,8 @@ public final class BridgeState {
     private final TreeMap<Integer, OscMessage> beatGrids = new TreeMap<>();
     private final TreeMap<Integer, OscMessage> art = new TreeMap<>();
     private DemandListener demandListener = (topic, wanted) -> { };
+    private WaveformStyleListener styleListener = style -> { };
+    private WaveformData.Style waveformStyle = DEFAULT_WAVEFORM_STYLE;
 
     private Integer masterPlayer;
     private Float masterTempo;
@@ -101,6 +112,31 @@ public final class BridgeState {
 
     public void setDemandListener(DemandListener listener) {
         this.demandListener = listener == null ? (topic, wanted) -> { } : listener;
+    }
+
+    public void setWaveformStyleListener(WaveformStyleListener listener) {
+        this.styleListener = listener == null ? style -> { } : listener;
+    }
+
+    /** The waveform style clients asked for last ({@link #DEFAULT_WAVEFORM_STYLE} until one does). */
+    public WaveformData.Style waveformStyle() {
+        return waveformStyle;
+    }
+
+    /**
+     * The style named in {@code /waveforms style <name>}: {@code rgb},
+     * {@code 3band} (or {@code three_band}, as announced) or {@code blue},
+     * in any case. Null for anything else.
+     */
+    static WaveformData.Style parseWaveformStyle(String name) {
+        if (name == null) return null;
+        switch (name.trim().toLowerCase(Locale.ROOT)) {
+            case "rgb": return WaveformData.Style.RGB;
+            case "3band":
+            case "three_band": return WaveformData.Style.THREE_BAND;
+            case "blue": return WaveformData.Style.BLUE;
+            default: return null;
+        }
     }
 
     /** True while a client streams {@code topic}. */
@@ -134,6 +170,11 @@ public final class BridgeState {
                 streamable(msg, route, true);
                 break;
             case WAVEFORMS:
+                if ("style".equals(msg.stringArg(0))) {
+                    handleWaveformStyle(msg, route);
+                    break;
+                }
+                // fall through
             case ART: {
                 final boolean before = subs.hasSubscribers(msg.address());
                 streamable(msg, route, true);
@@ -147,6 +188,19 @@ public final class BridgeState {
             default:
                 logger.debug("Ignoring unsupported OSC command {}", msg);
         }
+    }
+
+    private void handleWaveformStyle(OscMessage msg, ResponseRoute route) {
+        final Object arg = msg.arg(1);
+        final WaveformData.Style style = parseWaveformStyle(msg.stringArg(1));
+        if (style == null) {
+            error(route, "Unknown waveform style for /waveforms style (use rgb, 3band or blue): " + arg);
+            return;
+        }
+        if (style == waveformStyle) return;
+        logger.info("Waveform style {} requested (was {})", style.oscName(), waveformStyle.oscName());
+        waveformStyle = style;
+        styleListener.waveformStyleChanged(style);
     }
 
     private void handleRespond(OscMessage msg, ResponseRoute route) {

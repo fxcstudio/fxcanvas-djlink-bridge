@@ -52,10 +52,21 @@ public final class AssetStore implements AutoCloseable {
     }
 
     /** Write {@code bytes} as the newest file for {@code key}; returns its absolute path. */
-    public synchronized Path write(String key, String extension, byte[] bytes) throws IOException {
+    public Path write(String key, String extension, byte[] bytes) throws IOException {
+        return write(key, null, extension, bytes);
+    }
+
+    /**
+     * Write {@code bytes} as the newest file for {@code key}, with
+     * {@code label} in the file name (for example the waveform style, so a
+     * file of one style is never mistaken for another). Files with different
+     * labels share the {@link #KEEP} newest per key.
+     */
+    public synchronized Path write(String key, String label, String extension, byte[] bytes) throws IOException {
         final long n = ++sequence;
-        Path tmp = dir.resolve(key + "-" + n + ".tmp");
-        Path target = dir.resolve(key + "-" + n + "." + extension);
+        final String name = label == null || label.isEmpty() ? key + "-" + n : key + "-" + label + "-" + n;
+        Path tmp = dir.resolve(name + ".tmp");
+        Path target = dir.resolve(name + "." + extension);
         Files.write(tmp, bytes);
         try {
             Files.move(tmp, target, StandardCopyOption.ATOMIC_MOVE);

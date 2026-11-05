@@ -91,6 +91,25 @@ public final class SimAssets {
                 t.durationMs(), null, low, mid, high);
     }
 
+    /**
+     * A generated waveform in another style. The generator makes three-band
+     * levels; RGB uses the same levels as its color channels, and blue keeps
+     * only the overall level.
+     */
+    public static WaveformData restyle(WaveformData w, WaveformData.Style style) {
+        if (w.style == style) return w;
+        final byte[] segments = w.segments.clone();
+        final boolean bands = style != WaveformData.Style.BLUE && w.bands;
+        if (!bands) {
+            for (int i = 0; i < segments.length; i += WaveformData.BYTES_PER_SEGMENT) {
+                segments[i + 1] = 0;
+                segments[i + 2] = 0;
+                segments[i + 3] = 0;
+            }
+        }
+        return new WaveformData(w.trackId, w.kind, style, bands, w.segmentsPerSecond, w.durationMs, segments);
+    }
+
     /** A JPEG: a record on a two-color gradient, colors picked from the track id. */
     public static byte[] art(SimTrack t) throws IOException {
         final int size = ART_SIZE;

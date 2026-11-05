@@ -97,6 +97,16 @@
                     <exclude>META-INF/versions/*/module-info.class</exclude>
                   </excludes>
                 </filter>
+                <filter>
+                  <!-- SQLite is only used by beat-link's OpusProvider (Opus Quad metadata
+                       archives), which the bridge never attaches. Leaving its native
+                       libraries out keeps unsigned Mach-O/ELF/DLL binaries out of the
+                       jar, which macOS notarization would reject, and saves ~12 MB. -->
+                  <artifact>io.github.willena:sqlite-jdbc</artifact>
+                  <excludes>
+                    <exclude>org/sqlite/native/**</exclude>
+                  </excludes>
+                </filter>
               </filters>
               <transformers>
                 <transformer implementation="org.apache.maven.plugins.shade.resource.ManifestResourceTransformer">

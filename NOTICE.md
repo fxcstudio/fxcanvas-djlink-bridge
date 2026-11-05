@@ -21,6 +21,10 @@ from the locations below.
 | SLF4J API, JDK14 binding, ext | 1.7.36 / 2.0.13 | MIT | https://www.slf4j.org/ |
 | API Guardian | 1.1.2 | Apache-2.0 | https://github.com/apiguardian-team/apiguardian |
 
+sqlite-jdbc is included without its native SQLite libraries
+(`org/sqlite/native/**`): the bridge never opens a SQLite database, and the
+jar then contains no native code.
+
 Remote Tea is licensed under the GNU Library General Public License 2.0. It is
 included as unmodified classes inside the jar. You may replace those classes
 with a modified version of Remote Tea by rebuilding the jar from this

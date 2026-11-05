@@ -25,7 +25,7 @@ features FXCanvas uses, plus these additions:
 Java 11 or later.
 
 ```
-java -jar fxc-djlink-bridge-1.3.0.jar [-o 17002] [-r] [-d NUM] [-L file.log]
+java -jar fxc-djlink-bridge-1.4.0.jar [-o 17002] [-r] [-d NUM] [-L file.log]
 ```
 
 The OSC server listens on `127.0.0.1` only. Send `/respond <port>` first to
@@ -49,9 +49,9 @@ players: device found messages for the players and a mixer (device 33),
 status, beats, the tempo master, metadata, phrases, positions and deck state.
 
 ```
-java -jar fxc-djlink-bridge-1.3.0.jar --simulate
-java -jar fxc-djlink-bridge-1.3.0.jar --sim-decks 3 --sim-track a --sim-track short --sim-speed 4
-java -jar fxc-djlink-bridge-1.3.0.jar --sim-track PIONEER/USBANLZ/P016/0000875E/ANLZ0000.EXT
+java -jar fxc-djlink-bridge-1.4.0.jar --simulate
+java -jar fxc-djlink-bridge-1.4.0.jar --sim-decks 3 --sim-track a --sim-track short --sim-speed 4
+java -jar fxc-djlink-bridge-1.4.0.jar --sim-track PIONEER/USBANLZ/P016/0000875E/ANLZ0000.EXT
 ```
 
 | Option | Default | Meaning |
@@ -116,8 +116,8 @@ i playing, i looping, f tempo, i master`. `--send` exits with 0 when every
 command succeeded, 1 when one failed, and 2 when no simulator answered.
 
 ```
-java -jar fxc-djlink-bridge-1.3.0.jar --send "loop 1 8" --send state
-java -jar fxc-djlink-bridge-1.3.0.jar -o 17002 --send "bank 2 warm"
+java -jar fxc-djlink-bridge-1.4.0.jar --send "loop 1 8" --send state
+java -jar fxc-djlink-bridge-1.4.0.jar -o 17002 --send "bank 2 warm"
 ```
 
 A script example (`show.txt`), run with `--sim-script show.txt`:
@@ -192,8 +192,9 @@ i loopBeats, i atEnd, i cued` (topic `/deck-state`, since 1.1.0), sent when any
 of these change:
 
 - `playState`: `no_track`, `loading`, `playing`, `looping`, `paused`, `cued`,
-  `cue_playing`, `cue_scratching`, `searching`, `ended` or `unknown`.
-- `looping`: 1 while a loop plays. Players that report loop bounds (CDJ-3000)
+  `cue_playing`, `cue_scratching`, `searching`, `ended`, `emergency_loop`
+  (the player lost its media and loops what it has buffered) or `unknown`.
+- `looping`: 1 while a loop plays, including an emergency loop. Players that report loop bounds (CDJ-3000)
   also fill in `loopStartMs`, `loopEndMs` and `loopBeats`; others send 0.
 - `atEnd`: 1 when the player reached the end of the track.
 

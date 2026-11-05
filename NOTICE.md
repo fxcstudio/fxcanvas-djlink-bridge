@@ -11,19 +11,21 @@ from the locations below.
 
 | Library | Version | License | Source |
 |---|---|---|---|
-| beat-link | 8.0.0 | EPL-2.0 | https://github.com/Deep-Symmetry/beat-link |
-| crate-digger | 0.2.1 | EPL-2.0 (secondary: MPL-2.0, LGPL-3.0) | https://github.com/Deep-Symmetry/crate-digger |
+| beat-link | 8.1.0 preview (snapshot build 8.1.0-20261027.135635-6) | EPL-2.0 | https://github.com/Deep-Symmetry/beat-link |
+| crate-digger | 0.2.2 preview (snapshot build 0.2.2-20261026.025444-2) | EPL-2.0 (secondary: MPL-2.0, LGPL-3.0) | https://github.com/Deep-Symmetry/crate-digger |
 | electro | 0.1.4 | EPL-2.0 | https://github.com/Deep-Symmetry/electro |
 | Remote Tea (remotetea-oncrpc) | 1.1.4 | LGPL-2.0 | https://remotetea.sourceforge.net/ |
 | Kaitai Struct Java runtime | 0.10 | MIT | https://github.com/kaitai-io/kaitai_struct_java_runtime |
-| sqlite-jdbc (io.github.willena) | 3.49.0.0 | Apache-2.0 | https://github.com/Willena/sqlite-jdbc-crypt |
+| sqlite-jdbc (io.github.willena) | 3.50.1.0 | Apache-2.0 | https://github.com/Willena/sqlite-jdbc-crypt |
 | Apache Commons Math | 3.6.1 | Apache-2.0 | https://commons.apache.org/proper/commons-math/ |
 | SLF4J API, JDK14 binding, ext | 1.7.36 / 2.0.13 | MIT | https://www.slf4j.org/ |
 | API Guardian | 1.1.2 | Apache-2.0 | https://github.com/apiguardian-team/apiguardian |
 
-sqlite-jdbc is included without its native SQLite libraries
-(`org/sqlite/native/**`): the bridge never opens a SQLite database, and the
-jar then contains no native code.
+sqlite-jdbc is included with its native SQLite libraries for Windows x64 and
+macOS arm64 and x64 only (`org/sqlite/native/Windows/x86_64`,
+`org/sqlite/native/Mac/*`). beat-link uses them to read the SQLite export
+database of CDJ-3000X, XDJ-AZ and Opus Quad players when a database key is
+configured. The other platforms' native libraries are left out.
 
 Remote Tea is licensed under the GNU Library General Public License 2.0. It is
 included as unmodified classes inside the jar. You may replace those classes

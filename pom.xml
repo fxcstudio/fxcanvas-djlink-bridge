@@ -6,7 +6,7 @@
 
   <groupId>studio.fxc</groupId>
   <artifactId>fxc-djlink-bridge</artifactId>
-  <version>1.3.0</version>
+  <version>1.4.0</version>
   <packaging>jar</packaging>
 
   <name>FXCanvas DJ Link Bridge</name>
@@ -22,10 +22,42 @@
   <properties>
     <maven.compiler.release>11</maven.compiler.release>
     <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
-    <beatlink.version>8.0.0</beatlink.version>
+    <!-- CDJ-3000X support is only on beat-link main (8.1.0 preview). Both are pinned
+         to timestamped snapshot builds, not the moving -SNAPSHOT, so a build is
+         reproducible: beat-link main at 1483c006 (2026-10-27), and the crate-digger
+         snapshot it was built against. Move to 8.1.0 once it is released. -->
+    <beatlink.version>8.1.0-20261027.135635-6</beatlink.version>
+    <cratedigger.version>0.2.2-20261026.025444-2</cratedigger.version>
+    <sqlite-jdbc.version>3.50.1.0</sqlite-jdbc.version>
     <slf4j.version>1.7.36</slf4j.version>
     <junit.version>5.10.2</junit.version>
   </properties>
+
+  <repositories>
+    <repository>
+      <!-- Deep Symmetry publishes beat-link and crate-digger previews here. -->
+      <id>central-snapshots</id>
+      <url>https://central.sonatype.com/repository/maven-snapshots/</url>
+      <releases><enabled>false</enabled></releases>
+      <snapshots><enabled>true</enabled></snapshots>
+    </repository>
+  </repositories>
+
+  <dependencyManagement>
+    <dependencies>
+      <!-- beat-link's pom asks for crate-digger 0.2.2-SNAPSHOT; pin the build instead. -->
+      <dependency>
+        <groupId>org.deepsymmetry</groupId>
+        <artifactId>crate-digger</artifactId>
+        <version>${cratedigger.version}</version>
+      </dependency>
+      <dependency>
+        <groupId>io.github.willena</groupId>
+        <artifactId>sqlite-jdbc</artifactId>
+        <version>${sqlite-jdbc.version}</version>
+      </dependency>
+    </dependencies>
+  </dependencyManagement>
 
   <dependencies>
     <dependency>
@@ -98,13 +130,22 @@
                   </excludes>
                 </filter>
                 <filter>
-                  <!-- SQLite is only used by beat-link's OpusProvider (Opus Quad metadata
-                       archives), which the bridge never attaches. Leaving its native
-                       libraries out keeps unsigned Mach-O/ELF/DLL binaries out of the
-                       jar, which macOS notarization would reject, and saves ~12 MB. -->
+                  <!-- beat-link reads the encrypted SQLite export (exportLibrary.db) of
+                       CDJ-3000X, XDJ-AZ and Opus Quad players through sqlite-jdbc when a
+                       database key is set. The bridge never sets one, but beat-link loads
+                       it from the shared Java preferences (for example one saved by Beat
+                       Link Trigger). Keep the natives for the platforms FXCanvas ships on
+                       (Windows x64, macOS arm64 and x64) and drop the rest (~12 MB).
+                       The macOS dylibs are unsigned: the app build must sign them. -->
                   <artifact>io.github.willena:sqlite-jdbc</artifact>
                   <excludes>
-                    <exclude>org/sqlite/native/**</exclude>
+                    <exclude>org/sqlite/native/FreeBSD/**</exclude>
+                    <exclude>org/sqlite/native/Linux/**</exclude>
+                    <exclude>org/sqlite/native/Linux-Android/**</exclude>
+                    <exclude>org/sqlite/native/Linux-Musl/**</exclude>
+                    <exclude>org/sqlite/native/Windows/aarch64/**</exclude>
+                    <exclude>org/sqlite/native/Windows/armv7/**</exclude>
+                    <exclude>org/sqlite/native/Windows/x86/**</exclude>
                   </excludes>
                 </filter>
               </filters>

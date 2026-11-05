@@ -79,6 +79,10 @@ public final class DjLinkAdapter {
     private final MetadataFinder metadataFinder = MetadataFinder.getInstance();
     /** Track length per player, from metadata (written on a beat-link thread, read on others). */
     private final Map<Integer, Long> durationsMs = new ConcurrentHashMap<>();
+    /** Serializes passive-mode changes (device listeners and the virtual player starter). */
+    private final Object passiveLock = new Object();
+    /** The mode last applied by {@link #updatePassive}, null before the first time. Guarded by passiveLock. */
+    private Boolean loggedPassive;
 
     private final AssetStore assets;
     /** Set from the event thread when a client starts or stops streaming /waveforms or /art. */
@@ -227,6 +231,7 @@ public final class DjLinkAdapter {
                 logger.info("Device found: {}", a);
                 events.execute(() -> state.deviceFound(number, name, ip));
                 ensureVirtualCdj();
+                updatePassive();
             }
 
             @Override
@@ -236,6 +241,7 @@ public final class DjLinkAdapter {
                 final String ip = a.getAddress().getHostAddress();
                 logger.info("Device lost: {}", a);
                 events.execute(() -> state.deviceLost(number, name, ip));
+                updatePassive();
                 if (deviceFinder.getCurrentDevices().isEmpty()) {
                     logger.info("Last device gone, stopping the virtual player");
                     virtualCdj.stop();
@@ -344,10 +350,7 @@ public final class DjLinkAdapter {
                     int number = virtualCdj.getDeviceNumber();
                     logger.info("Virtual player running as device {}", number);
                     metadataFinder.start();
-                    // A real player number can query the players' databases directly.
-                    // Otherwise read the exported database and analysis files over NFS,
-                    // which works whatever number we use and with four real players.
-                    metadataFinder.setPassive(number > 4);
+                    updatePassive();
                     CrateDigger.getInstance().start();
                     BeatGridFinder.getInstance().start();
                     AnalysisTagFinder.getInstance().start();
@@ -360,6 +363,37 @@ public final class DjLinkAdapter {
         }, "virtual-cdj-start");
         starter.setDaemon(true);
         starter.start();
+    }
+
+    /**
+     * Choose how the finders get track data.
+     *
+     * A standard player number (1-4) can query every player's database
+     * directly. Above 4, CDJ-3000, CDJ-3000X and XDJ-AZ players still answer
+     * queries, but older players only answer three other devices, so the
+     * bridge then reads the exported database and analysis files over NFS
+     * (passive mode). Passive mode cannot read the encrypted SQLite export
+     * that the CDJ-3000X and XDJ-AZ use without a database key, so the bridge
+     * stays active whenever every player on the network accepts the queries.
+     */
+    static boolean usePassiveMetadata(int deviceNumber, boolean limitedPlayerPresent) {
+        return deviceNumber > 4 && limitedPlayerPresent;
+    }
+
+    /** Apply {@link #usePassiveMetadata} to the devices now on the network. */
+    private void updatePassive() {
+        if (!virtualCdj.isRunning()) return;   // ensureVirtualCdj() calls this again once it is
+        synchronized (passiveLock) {
+            final boolean passive = usePassiveMetadata(virtualCdj.getDeviceNumber(),
+                    deviceFinder.isAnyDeviceLimitedToThreeDatabaseClients());
+            if (loggedPassive == null || passive != loggedPassive) {
+                loggedPassive = passive;
+                metadataFinder.setPassive(passive);
+                logger.info(passive
+                        ? "Reading track data from the players' exported files (an older player is on the network)"
+                        : "Requesting track data from the players directly");
+            }
+        }
     }
 
     private void onStatus(DeviceUpdate status) {
@@ -388,7 +422,10 @@ public final class DjLinkAdapter {
             loopEnd = s.getLoopEnd();
             loopBeats = s.getActiveLoopBeats();
         }
-        return new DeckState(s.getRekordboxId(), playState, s.isLooping(), loopStart, loopEnd, loopBeats,
+        // An emergency loop (the player lost its media and loops what it has
+        // buffered) counts as looping, so FXCanvas holds the current section.
+        final boolean looping = s.isLooping() || play == CdjStatus.PlayState1.EMERGENCY_LOOP;
+        return new DeckState(s.getRekordboxId(), playState, looping, loopStart, loopEnd, loopBeats,
                 s.isAtEnd(), s.isCued());
     }
 

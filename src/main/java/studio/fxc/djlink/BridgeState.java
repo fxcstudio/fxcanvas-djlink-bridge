@@ -2,6 +2,7 @@ package studio.fxc.djlink;
 
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import studio.fxc.djlink.model.DeckState;
 import studio.fxc.djlink.model.PhraseData;
 import studio.fxc.djlink.model.PositionData;
 import studio.fxc.djlink.model.TrackInfo;
@@ -41,6 +42,8 @@ public final class BridgeState {
     public static final String METADATA = "/metadata";
     public static final String PHRASES = "/phrases";
     public static final String POSITIONS = "/positions";
+    /** Since 1.1.0: play state, loop and end of track per player. */
+    public static final String DECK_STATE = "/deck-state";
 
     /** Highest player number that is a deck (CDJ-3000 and DJM-V10 setups use 1-6). */
     public static final int MAX_PLAYER = 6;
@@ -67,6 +70,7 @@ public final class BridgeState {
     /** Players whose current track has no phrase data, with that track's id. */
     private final TreeMap<Integer, Integer> phraseNone = new TreeMap<>();
     private final TreeMap<Integer, PositionData> positions = new TreeMap<>();
+    private final TreeMap<Integer, DeckState> deckStates = new TreeMap<>();
 
     private Integer masterPlayer;
     private Float masterTempo;
@@ -97,6 +101,7 @@ public final class BridgeState {
             case METADATA:
             case PHRASES:
             case POSITIONS:
+            case DECK_STATE:
             case MASTER:
                 streamable(msg, route, true);
                 break;
@@ -195,6 +200,9 @@ public final class BridgeState {
             case POSITIONS:
                 positions.forEach((n, p) -> out.add(positionMessage(n, p)));
                 break;
+            case DECK_STATE:
+                deckStates.forEach((n, d) -> out.add(deckMessage(n, d)));
+                break;
             case MASTER:
                 if (masterPlayer != null) {
                     out.add(OscMessage.of("/master/player", masterPlayer));
@@ -233,6 +241,7 @@ public final class BridgeState {
         phrases.remove(number);
         phraseNone.remove(number);
         positions.remove(number);
+        deckStates.remove(number);
     }
 
     /**
@@ -345,6 +354,12 @@ public final class BridgeState {
         publish(POSITIONS, positionMessage(player, position));
     }
 
+    /** A player's transport state (status packets). Published only when it changes. */
+    public void deckState(int player, DeckState state) {
+        if (state.equals(deckStates.put(player, state))) return;
+        publish(DECK_STATE, deckMessage(player, state));
+    }
+
     // =========================================================================
     // Helpers
     // =========================================================================
@@ -362,9 +377,24 @@ public final class BridgeState {
         }
     }
 
+    /**
+     * {@code /position/{player}}. The first five arguments are protocol 1 as
+     * shipped in 1.0.0; 1.1.0 appends position, duration, beat count and
+     * pitch, so a reader of the first five is unaffected.
+     */
     static OscMessage positionMessage(int player, PositionData p) {
         return OscMessage.of("/position/" + player, p.trackId, p.beatNumber,
-                p.playing ? 1 : 0, p.definitive ? 1 : 0, p.reason);
+                p.playing ? 1 : 0, p.definitive ? 1 : 0, p.reason,
+                clampInt(p.positionMs), clampInt(p.durationMs), p.beatCount, p.pitch);
+    }
+
+    static OscMessage deckMessage(int player, DeckState d) {
+        return OscMessage.of("/deck/" + player, d.trackId, d.playState, d.looping ? 1 : 0,
+                clampInt(d.loopStartMs), clampInt(d.loopEndMs), d.loopBeats, d.atEnd ? 1 : 0, d.cued ? 1 : 0);
+    }
+
+    private static int clampInt(long value) {
+        return (int) Math.max(0, Math.min(Integer.MAX_VALUE, value));
     }
 
     static List<OscMessage> metadataMessages(int player, TrackInfo md) {

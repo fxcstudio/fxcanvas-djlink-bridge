@@ -2,6 +2,7 @@ package studio.fxc.djlink;
 
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
+import studio.fxc.djlink.model.DeckState;
 import studio.fxc.djlink.model.PhraseData;
 import studio.fxc.djlink.model.PositionData;
 import studio.fxc.djlink.model.TrackInfo;
@@ -163,8 +164,44 @@ class BridgeStateTest {
     @Test
     void positions() {
         out.clear();
-        state.position(4, new PositionData(819, 129, true, true, PositionData.REASON_BEAT));
-        assertEquals(List.of(OscMessage.of("/position/4", 819, 129, 1, 1, 0)), out.messages());
+        state.position(4, new PositionData(819, 129, true, true, PositionData.REASON_BEAT,
+                60234, 343000, 731, 1.02f));
+        // The first five arguments are the 1.0.0 layout; 1.1.0 appends time, length, beat count, pitch.
+        assertEquals(List.of(OscMessage.of("/position/4", 819, 129, 1, 1, 0, 60234, 343000, 731, 1.02f)),
+                out.messages());
+    }
+
+    @Test
+    void deckStateIsPublishedOnChangeOnly() {
+        state.handle(OscMessage.of("/deck-state", "stream"), app);
+        out.clear();
+        DeckState playing = new DeckState(819, "playing", false, 0, 0, 0, false, false);
+        state.deckState(2, playing);
+        state.deckState(2, new DeckState(819, "playing", false, 0, 0, 0, false, false));
+        DeckState looping = new DeckState(819, "looping", true, 61000, 68500, 16, false, false);
+        state.deckState(2, looping);
+        assertEquals(List.of(
+                OscMessage.of("/deck/2", 819, "playing", 0, 0, 0, 0, 0, 0),
+                OscMessage.of("/deck/2", 819, "looping", 1, 61000, 68500, 16, 0, 0)), out.messages());
+
+        // A new subscriber gets the current state at once.
+        out.clear();
+        state.handle(OscMessage.of("/deck-state", "list"), app);
+        assertEquals(List.of(OscMessage.of("/deck/2", 819, "looping", 1, 61000, 68500, 16, 0, 0)), out.messages());
+
+        // End of track.
+        out.clear();
+        state.deckState(2, new DeckState(819, "ended", false, 0, 0, 0, true, false));
+        assertEquals(List.of(OscMessage.of("/deck/2", 819, "ended", 0, 0, 0, 0, 1, 0)), out.messages());
+    }
+
+    @Test
+    void deckStateIsForgottenWhenTheDeviceLeaves() {
+        state.deckState(3, new DeckState(5, "paused", false, 0, 0, 0, false, true));
+        state.deviceLost(3, "CDJ-3000", "10.0.0.3");
+        out.clear();
+        state.handle(OscMessage.of("/deck-state", "list"), app);
+        assertTrue(out.messages().isEmpty());
     }
 
     @Test

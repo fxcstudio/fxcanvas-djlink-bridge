@@ -11,7 +11,8 @@ features FXCanvas uses, plus three additions:
 
 - `/version`: bridge name, version and protocol number.
 - `/phrases`: rekordbox phrase analysis (song structure) for each loaded track.
-- `/positions`: the beat-grid beat each player is on, every beat and after every jump.
+- `/positions`: the beat-grid beat and time each player is on, every beat and after every jump.
+- `/deck-state`: play state, loops and end of track per player.
 
 > **Unofficial.** This project is not affiliated with, endorsed by, or supported
 > by Pioneer DJ, AlphaTheta, or rekordbox. Use it at your own risk; see the
@@ -22,7 +23,7 @@ features FXCanvas uses, plus three additions:
 Java 11 or later.
 
 ```
-java -jar fxc-djlink-bridge-1.0.0.jar [-o 17002] [-r] [-d NUM] [-L file.log]
+java -jar fxc-djlink-bridge-1.1.0.jar [-o 17002] [-r] [-d NUM] [-L file.log]
 ```
 
 The OSC server listens on `127.0.0.1` only. Send `/respond <port>` first to
@@ -42,7 +43,7 @@ choose where responses go (default: the sender's port plus one).
 Subscriptions follow open-beat-control: send `/<topic> stream [port]`,
 `/<topic> list [port]` or `/<topic> stop [port]`. `stream` also sends the
 current state. Topics: `/devices /tempos /playing /on-air /metadata /master
-/beats /phrases /positions`.
+/beats /phrases /positions /deck-state`.
 
 ### Compatible messages (unchanged from open-beat-control)
 
@@ -82,8 +83,30 @@ then count times: i startBeat, s rawKind, s label, i fill, i fillBeat
 `/phrases/{device}/none i trackId`: the track on that player has no phrase data
 (not analyzed with phrase analysis, or unloaded with trackId 0).
 
-`/position/{device} i trackId, i beatNumber, i playing, i definitive, i reason`:
-`reason` is 0 for a beat and 1 for a movement (cue, jump, loop, stop).
+`/position/{device} i trackId, i beatNumber, i playing, i definitive, i reason,
+i positionMs, i durationMs, i beatCount, f pitch`:
+
+- `reason` is 0 for a beat and 1 for a movement (cue, jump, loop, stop).
+- Since 1.1.0 four arguments are appended (readers of the first five are
+  unaffected): the playback position and the track length in milliseconds
+  (length 0 when unknown), the number of beats in the beat grid (0 when
+  unknown), and the playback speed (1.0 = normal). Together they give time
+  remaining and beats remaining. Positions arrive on every beat and every
+  movement; interpolate between them with `pitch`.
+
+`/deck/{device} i trackId, s playState, i looping, i loopStartMs, i loopEndMs,
+i loopBeats, i atEnd, i cued` (topic `/deck-state`, since 1.1.0), sent when any
+of these change:
+
+- `playState`: `no_track`, `loading`, `playing`, `looping`, `paused`, `cued`,
+  `cue_playing`, `cue_scratching`, `searching`, `ended` or `unknown`.
+- `looping`: 1 while a loop plays. Players that report loop bounds (CDJ-3000)
+  also fill in `loopStartMs`, `loopEndMs` and `loopBeats`; others send 0.
+- `atEnd`: 1 when the player reached the end of the track.
+
+Song structure extras that `/phrases` already carries: the rekordbox Lighting
+`bank` (style picked per track in rekordbox Lighting mode), the track `mood`,
+and each phrase's fill-in (`fill`, `fillBeat`).
 
 ## Build
 

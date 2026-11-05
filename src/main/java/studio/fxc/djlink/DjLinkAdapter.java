@@ -24,11 +24,14 @@ import org.deepsymmetry.beatlink.data.TrackPositionUpdate;
 import org.deepsymmetry.cratedigger.pdb.RekordboxAnlz;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import studio.fxc.djlink.model.DeckState;
 import studio.fxc.djlink.model.PhraseData;
 import studio.fxc.djlink.model.PositionData;
 import studio.fxc.djlink.model.TrackInfo;
 
+import java.util.Locale;
 import java.util.Map;
+import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.Executor;
 
 /**
@@ -55,6 +58,8 @@ public final class DjLinkAdapter {
     private final VirtualCdj virtualCdj = VirtualCdj.getInstance();
     private final BeatFinder beatFinder = BeatFinder.getInstance();
     private final MetadataFinder metadataFinder = MetadataFinder.getInstance();
+    /** Track length per player, from metadata (written on a beat-link thread, read on others). */
+    private final Map<Integer, Long> durationsMs = new ConcurrentHashMap<>();
 
     public DjLinkAdapter(BridgeState state, Executor events, Options options) {
         this.state = state;
@@ -132,6 +137,11 @@ public final class DjLinkAdapter {
         metadataFinder.addTrackMetadataListener(update -> {
             final int player = update.player;
             final TrackInfo info = toTrackInfo(update.metadata);
+            if (info != null && info.duration > 0) {
+                durationsMs.put(player, info.duration * 1000L);
+            } else {
+                durationsMs.remove(player);
+            }
             events.execute(() -> state.metadata(player, info));
         });
 
@@ -194,7 +204,28 @@ public final class DjLinkAdapter {
         final boolean isCdj = status instanceof CdjStatus;
         final boolean playing = isCdj && ((CdjStatus) status).isPlaying();
         final boolean onAir = isCdj && ((CdjStatus) status).isOnAir();
-        events.execute(() -> state.status(device, tempo, isCdj, playing, onAir));
+        final DeckState deck = isCdj ? toDeckState((CdjStatus) status) : null;
+        events.execute(() -> {
+            state.status(device, tempo, isCdj, playing, onAir);
+            if (deck != null) state.deckState(device, deck);
+        });
+    }
+
+    static DeckState toDeckState(CdjStatus s) {
+        final CdjStatus.PlayState1 play = s.getPlayState1();
+        final String playState = play == null ? "unknown" : play.name().toLowerCase(Locale.ROOT);
+        long loopStart = 0;
+        long loopEnd = 0;
+        int loopBeats = 0;
+        // Loop bounds come from players that report them (CDJ-3000); others
+        // still report "looping" through their play state.
+        if (s.canReportLooping()) {
+            loopStart = s.getLoopStart();
+            loopEnd = s.getLoopEnd();
+            loopBeats = s.getActiveLoopBeats();
+        }
+        return new DeckState(s.getRekordboxId(), playState, s.isLooping(), loopStart, loopEnd, loopBeats,
+                s.isAtEnd(), s.isCued());
     }
 
     private void onAnalysis(AnalysisTagUpdate update) {
@@ -293,8 +324,10 @@ public final class DjLinkAdapter {
 
         private void post(TrackPositionUpdate update, int reason) {
             if (update == null || update.beatNumber <= 0) return;
+            final int beatCount = update.beatGrid == null ? 0 : update.beatGrid.beatCount;
             final PositionData p = new PositionData(statusTrackId(player), update.beatNumber,
-                    update.playing, update.definitive, reason);
+                    update.playing, update.definitive, reason, update.milliseconds,
+                    durationsMs.getOrDefault(player, 0L), beatCount, (float) update.pitch);
             events.execute(() -> state.position(player, p));
         }
     }

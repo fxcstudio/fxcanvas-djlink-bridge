@@ -21,11 +21,11 @@ from the locations below.
 | SLF4J API, JDK14 binding, ext | 1.7.36 / 2.0.13 | MIT | https://www.slf4j.org/ |
 | API Guardian | 1.1.2 | Apache-2.0 | https://github.com/apiguardian-team/apiguardian |
 
-sqlite-jdbc is included with its native SQLite libraries for Windows x64 and
-macOS arm64 and x64 only (`org/sqlite/native/Windows/x86_64`,
-`org/sqlite/native/Mac/*`). beat-link uses them to read the SQLite export
-database of CDJ-3000X, XDJ-AZ and Opus Quad players when a database key is
-configured. The other platforms' native libraries are left out.
+sqlite-jdbc is included without its native SQLite libraries
+(`org/sqlite/native/**`), so the jar contains no native code. beat-link uses
+SQLite only to read the encrypted export database of CDJ-3000X, XDJ-AZ and
+Opus Quad players when a database key is configured. The bridge does not
+support that path: it requests track data from those players directly.
 
 Remote Tea is licensed under the GNU Library General Public License 2.0. It is
 included as unmodified classes inside the jar. You may replace those classes

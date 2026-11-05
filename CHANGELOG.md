@@ -13,5 +13,8 @@
   back to reading the exported files.
 - An emergency loop (the player lost its media and loops what it has buffered)
   now counts as looping on `/deck`. The play state is `emergency_loop`.
-- The jar now includes the SQLite native libraries for Windows x64 and macOS
-  arm64 and x64. The jar for 1.4.0 is about 5.6 MB.
+- The bridge does not read the encrypted SQLite export database of the
+  CDJ-3000X, XDJ-AZ or Opus Quad (beat-link's database-key path). The jar still
+  contains no SQLite native libraries. If a database key is set in Beat Link
+  Trigger's shared settings, beat-link tries that path, logs an error for each
+  mounted media, and the bridge continues with direct requests.

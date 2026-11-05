@@ -7,7 +7,7 @@ as a child process for its Pioneer DJ tempo source.
 It is built on Deep Symmetry's [beat-link](https://github.com/Deep-Symmetry/beat-link)
 and speaks the same OSC messages as Deep Symmetry's
 [open-beat-control](https://github.com/Deep-Symmetry/open-beat-control) for the
-features FXCanvas uses, plus three additions:
+features FXCanvas uses, plus these additions:
 
 - `/version`: bridge name, version and protocol number.
 - `/phrases`: rekordbox phrase analysis (song structure) for each loaded track.
@@ -23,7 +23,7 @@ features FXCanvas uses, plus three additions:
 Java 11 or later.
 
 ```
-java -jar fxc-djlink-bridge-1.1.0.jar [-o 17002] [-r] [-d NUM] [-L file.log]
+java -jar fxc-djlink-bridge-1.2.0.jar [-o 17002] [-r] [-d NUM] [-L file.log]
 ```
 
 The OSC server listens on `127.0.0.1` only. Send `/respond <port>` first to
@@ -37,6 +37,89 @@ choose where responses go (default: the sender's port plus one).
 | `-L, --log-file PATH` | stderr | Log to a rotating file |
 | `-l, --latency MS` | 20 | Accepted for compatibility |
 | `-B -a -b -c PORT` | | Accepted and ignored (FXCanvas bridges Ableton Link itself) |
+
+## Simulator
+
+Since 1.2.0 the bridge can simulate players instead of joining a network, so
+you can test a client without CDJs. A client sees the same OSC as from real
+players: device found messages for the players and a mixer (device 33),
+status, beats, the tempo master, metadata, phrases, positions and deck state.
+
+```
+java -jar fxc-djlink-bridge-1.2.0.jar --simulate
+java -jar fxc-djlink-bridge-1.2.0.jar --sim-decks 3 --sim-track a --sim-track short --sim-speed 4
+java -jar fxc-djlink-bridge-1.2.0.jar --sim-track PIONEER/USBANLZ/P016/0000875E/ANLZ0000.EXT
+```
+
+| Option | Default | Meaning |
+|---|---|---|
+| `--simulate` | off | Simulate players; no network traffic |
+| `--sim-decks N` | 2 | Number of players, 1-6 |
+| `--sim-speed X` | 1 | Time multiplier, for fast tests |
+| `--sim-track NAME\|FILE` | a, b, c, short, a, b | Track for the next player (repeatable). `--anlz` is the same option |
+| `--sim-script FILE` | | Timed commands, one `<seconds> <command>` per line, `#` comments |
+| `--send "COMMAND"` | | Send a command to a running simulator on `-o PORT` and exit (repeatable) |
+
+Any `--sim-*` option implies `--simulate`. At start, player 1 plays as tempo
+master and on air; the others are cued at their first beat.
+
+**Tracks.** Built-in tracks have a constant tempo and a phrase structure:
+
+| Name | Tempo | Mood, bank | Phrases |
+|---|---|---|---|
+| `a` | 128 | high, club_1 | Intro 1, Up 1, Down, Chorus 1, Up 2, Chorus 2, Outro 1 |
+| `b` | 124 | mid, hot | Intro, Verse 1, Chorus, Bridge, Verse 2, Chorus, Outro |
+| `c` | 122 | low, cool | Intro, Verse 1, Verse 2, Chorus, Outro |
+| `short` | 130 | high, vivid | Six 4-bar phrases, most with fill-ins, for quick tests |
+| `plain` | 126 | | None: stands for a track without phrase analysis |
+
+Phrases are 16 bars unless noted; some end in a 2-bar fill-in. A real
+rekordbox analysis file also works: give the `ANLZ0000.EXT` or `ANLZ0000.DAT`
+from an exported USB stick (`PIONEER/USBANLZ/...`) and the other file in the
+same folder is read too. The track plays at its beat grid's first tempo.
+
+**Commands.** Type them on the bridge's stdin, put them in a script, send them
+with `--send`, or send OSC `/sim/<command> args...` to the bridge port. Deck
+numbers start at 1.
+
+| Command | Effect |
+|---|---|
+| `play <deck> [0\|1]` | Start (default) or stop |
+| `cue <deck>` | Stop and go back to the first beat |
+| `seek <deck> <beat>` | Jump to a beat-grid beat |
+| `phrase <deck> <n>` | Jump to one beat before phrase n |
+| `end <deck> [bars]` | Jump to `bars` (default 8) before the end |
+| `loop <deck> <beats>` | Loop from the current beat; `loop <deck> 0` ends the loop |
+| `tempo <deck> <bpm>` | Change the pitch to reach this tempo |
+| `load <deck> <name\|file> [bank]` | Load a track, optionally with another Lighting bank |
+| `bank <deck> <bank>` | Change the loaded track's Lighting bank and resend its phrases |
+| `master <deck>` | Make the deck tempo master |
+| `onair <deck> <0\|1>` | Channel fader up or down |
+| `state` | Print every deck (over OSC: one `/sim/deck` per deck) |
+| `help` | List the commands |
+
+Quote words that contain spaces: `load 1 "D:\My Stick\PIONEER\USBANLZ\...\ANLZ0000.EXT"`.
+
+Over OSC every command answers `/sim/ok s address` or `/sim/error s message`
+on the sender's response port. `/sim/deck` carries `i deck, s title, i beat,
+i playing, i looping, f tempo, i master`. `--send` exits with 0 when every
+command succeeded, 1 when one failed, and 2 when no simulator answered.
+
+```
+java -jar fxc-djlink-bridge-1.2.0.jar --send "loop 1 8" --send state
+java -jar fxc-djlink-bridge-1.2.0.jar -o 17002 --send "bank 2 warm"
+```
+
+A script example (`show.txt`), run with `--sim-script show.txt`:
+
+```
+# Start deck 2 on the chorus and hand over after 30 seconds
+10 phrase 2 3
+12 play 2
+12 onair 2 1
+30 master 2
+31 onair 1 0
+```
 
 ## OSC protocol (version 1)
 

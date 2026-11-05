@@ -1,5 +1,7 @@
 package studio.fxc.djlink;
 
+import studio.fxc.djlink.sim.SimCommands;
+
 import java.util.ArrayList;
 import java.util.List;
 
@@ -17,6 +19,16 @@ public final class Options {
     public boolean help = false;
     public boolean version = false;
     public final List<String> ignored = new ArrayList<>();
+
+    // Simulator (no DJ Link network): see studio.fxc.djlink.sim.Simulator.
+    public boolean simulate = false;
+    public int simDecks = 2;
+    public double simSpeed = 1.0;
+    /** Built-in track names or analysis files, for deck 1, 2, ... */
+    public final List<String> simTracks = new ArrayList<>();
+    public String simScript = null;
+    /** Commands to send to a running simulating bridge (client mode). */
+    public final List<String> send = new ArrayList<>();
 
     /** Thrown for an option the bridge cannot accept. */
     public static final class OptionsException extends Exception {
@@ -71,11 +83,55 @@ public final class Options {
                     intValue(args, ++i, arg, 1, 65535);
                     o.ignored.add(arg + " " + args[i]);
                     break;
+                case "--simulate":
+                    o.simulate = true;
+                    break;
+                case "--sim-decks":
+                    o.simDecks = intValue(args, ++i, arg, 1, BridgeState.MAX_PLAYER);
+                    o.simulate = true;
+                    break;
+                case "--sim-speed":
+                    o.simSpeed = doubleValue(args, ++i, arg, 0.01, 100);
+                    o.simulate = true;
+                    break;
+                case "--sim-track":
+                case "--anlz":
+                    o.simTracks.add(stringValue(args, ++i, arg));
+                    o.simulate = true;
+                    break;
+                case "--sim-script":
+                    o.simScript = stringValue(args, ++i, arg);
+                    o.simulate = true;
+                    break;
+                case "--send":
+                    o.send.add(stringValue(args, ++i, arg));
+                    break;
                 default:
                     throw new OptionsException("Unknown argument: " + arg);
             }
         }
+        if (o.simTracks.size() > o.simDecks) {
+            o.simDecks = Math.min(BridgeState.MAX_PLAYER, o.simTracks.size());
+        }
+        if (o.simTracks.size() > BridgeState.MAX_PLAYER) {
+            throw new OptionsException("At most " + BridgeState.MAX_PLAYER + " simulated tracks");
+        }
         return o;
+    }
+
+    private static double doubleValue(String[] args, int index, String option, double min, double max)
+            throws OptionsException {
+        String text = stringValue(args, index, option);
+        final double value;
+        try {
+            value = Double.parseDouble(text.trim());
+        } catch (NumberFormatException e) {
+            throw new OptionsException(option + " must be a number, got: " + text);
+        }
+        if (!(value >= min && value <= max)) {
+            throw new OptionsException(option + " must be between " + min + " and " + max + ", got: " + text);
+        }
+        return value;
     }
 
     private static String stringValue(String[] args, int index, String option) throws OptionsException {
@@ -110,6 +166,18 @@ public final class Options {
                 + "  -L, --log-file PATH              Log to a file instead of stderr" + nl
                 + "  -V, --version                    Print the version and exit" + nl
                 + "  -h, --help                       Print this help and exit" + nl + nl
-                + "  -B, -a, -b, -c PORT              Accepted and ignored (Ableton Link is bridged by FXCanvas)" + nl;
+                + "  -B, -a, -b, -c PORT              Accepted and ignored (Ableton Link is bridged by FXCanvas)" + nl + nl
+                + "Simulator (fake players, no DJ Link network needed):" + nl
+                + "  --simulate                       Simulate players instead of joining the network" + nl
+                + "  --sim-decks N             2      Number of simulated players (1-6)" + nl
+                + "  --sim-speed X             1      Time multiplier (4 = four times as fast)" + nl
+                + "  --sim-track NAME|FILE            Track for the next deck: a, b, c, short, plain," + nl
+                + "                                   or a rekordbox ANLZ0000.EXT/.DAT file (repeatable;" + nl
+                + "                                   --anlz is the same option)" + nl
+                + "  --sim-script FILE                Timed commands, one '<seconds> <command>' per line" + nl
+                + "  --send \"COMMAND\"                 Send a command to a running simulator on -o PORT" + nl
+                + "                                   and exit (repeatable)" + nl
+                + "Any --sim-* option implies --simulate. While simulating, type commands on stdin." + nl + nl
+                + SimCommands.HELP + nl;
     }
 }

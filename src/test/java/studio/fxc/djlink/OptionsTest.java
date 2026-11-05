@@ -37,6 +37,32 @@ class OptionsTest {
     }
 
     @Test
+    void simulatorOptions() throws Exception {
+        Options plain = Options.parse(new String[0]);
+        assertFalse(plain.simulate);
+
+        Options o = Options.parse(new String[]{"--simulate", "--sim-decks", "3", "--sim-speed", "2.5",
+                "--sim-track", "b", "--anlz", "x/ANLZ0000.EXT", "--sim-script", "show.txt"});
+        assertTrue(o.simulate);
+        assertEquals(3, o.simDecks);
+        assertEquals(2.5, o.simSpeed);
+        assertEquals(java.util.List.of("b", "x/ANLZ0000.EXT"), o.simTracks);
+        assertEquals("show.txt", o.simScript);
+
+        assertTrue(Options.parse(new String[]{"--sim-track", "a"}).simulate, "any --sim-* implies --simulate");
+        assertEquals(4, Options.parse(new String[]{"--sim-track", "a", "--sim-track", "b", "--sim-track", "c",
+                "--sim-track", "short"}).simDecks, "one deck per track");
+
+        Options send = Options.parse(new String[]{"-o", "17102", "--send", "loop 1 8", "--send", "state"});
+        assertFalse(send.simulate);
+        assertEquals(java.util.List.of("loop 1 8", "state"), send.send);
+
+        assertThrows(Options.OptionsException.class, () -> Options.parse(new String[]{"--sim-decks", "7"}));
+        assertThrows(Options.OptionsException.class, () -> Options.parse(new String[]{"--sim-speed", "0"}));
+        assertThrows(Options.OptionsException.class, () -> Options.parse(new String[]{"--send"}));
+    }
+
+    @Test
     void rejectsBadValues() {
         assertThrows(Options.OptionsException.class, () -> Options.parse(new String[]{"-o", "0"}));
         assertThrows(Options.OptionsException.class, () -> Options.parse(new String[]{"-o", "abc"}));

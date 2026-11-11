@@ -32,7 +32,9 @@ public final class SimCommands {
             "  info <deck> \"title\" [\"artist\"]  rename the loaded track (sends new metadata)",
             "  art <deck> <file>          use a JPEG or PNG cover file as the track's album art",
             "  master <deck>              make a deck the tempo master",
-            "  onair <deck> <0|1>         channel fader up or down",
+            "  onair <deck> <0|1>         channel fader up or down (needs a mixer)",
+            "  mixer <0|1>                the mixer leaves (0) or joins (1) the network; without",
+            "                             a mixer no deck is on air",
             "  state                      print (and send /sim/deck for) every deck",
             "  help                       this text");
 

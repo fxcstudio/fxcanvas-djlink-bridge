@@ -29,6 +29,8 @@ public final class Options {
     /** Built-in track names or analysis files, for deck 1, 2, ... */
     public final List<String> simTracks = new ArrayList<>();
     public String simScript = null;
+    /** No mixer on the simulated network: the players never go on air. */
+    public boolean simNoMixer = false;
     /** Commands to send to a running simulating bridge (client mode). */
     public final List<String> send = new ArrayList<>();
 
@@ -108,6 +110,10 @@ public final class Options {
                     o.simScript = stringValue(args, ++i, arg);
                     o.simulate = true;
                     break;
+                case "--sim-no-mixer":
+                    o.simNoMixer = true;
+                    o.simulate = true;
+                    break;
                 case "--send":
                     o.send.add(stringValue(args, ++i, arg));
                     break;
@@ -182,6 +188,7 @@ public final class Options {
                 + "                                   or a rekordbox ANLZ0000.EXT/.DAT file (repeatable;" + nl
                 + "                                   --anlz is the same option)" + nl
                 + "  --sim-script FILE                Timed commands, one '<seconds> <command>' per line" + nl
+                + "  --sim-no-mixer                   No mixer on the network: the players never go on air" + nl
                 + "  --send \"COMMAND\"                 Send a command to a running simulator on -o PORT" + nl
                 + "                                   and exit (repeatable)" + nl
                 + "Any --sim-* option implies --simulate. While simulating, type commands on stdin." + nl + nl

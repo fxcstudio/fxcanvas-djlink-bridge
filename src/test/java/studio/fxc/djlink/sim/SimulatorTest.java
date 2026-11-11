@@ -88,6 +88,113 @@ class SimulatorTest {
     }
 
     @Test
+    void withoutAMixerNoDeckGoesOnAir() {
+        sim.setMixer(false);
+        sim.start(now, List.of());
+        assertEquals(2, at("/device/found").size());
+        assertTrue(at("/device/found").stream().noneMatch(m -> m.intArg(0) == Simulator.MIXER));
+        // Deck 1 still plays as master; it only reports off air.
+        assertTrue(sent.contains(OscMessage.of("/playing/1", 1)));
+        assertTrue(sent.contains(OscMessage.of("/master/player", 1)));
+        assertEquals(OscMessage.of("/on-air/1", 0), last(at("/on-air/1")));
+        assertNotNull(cmd("onair 2 1"));
+        cmd("play 2");
+        run(1.0);
+        assertTrue(at("/on-air/1").stream().allMatch(m -> m.intArg(0) == 0));
+        assertTrue(at("/on-air/2").stream().allMatch(m -> m.intArg(0) == 0));
+    }
+
+    @Test
+    void mixerLeavesAndJoinsWhileRunning() {
+        sim.start(now, List.of());
+        cmd("onair 2 1");
+        sent.clear();
+        assertNull(cmd("mixer 0"));
+        assertEquals(1, at("/device/lost").size());
+        assertEquals(Simulator.MIXER, last(at("/device/lost")).intArg(0));
+        assertEquals(OscMessage.of("/on-air/1", 0), last(at("/on-air/1")));
+        assertEquals(OscMessage.of("/on-air/2", 0), last(at("/on-air/2")));
+        assertNotNull(cmd("onair 1 1"));
+        sent.clear();
+        assertNull(cmd("mixer 1"));
+        assertTrue(sent.contains(OscMessage.of("/device/found", 33, "DJM-A9", "127.0.0.43")));
+        assertTrue(at("/on-air/1").isEmpty(), "faders stay down until onair");
+        assertNull(cmd("onair 1 1"));
+        assertEquals(OscMessage.of("/on-air/1", 1), last(at("/on-air/1")));
+        assertNotNull(cmd("mixer"));
+    }
+
+    private int indexOf(String address) {
+        for (int i = 0; i < sent.size(); i++) {
+            if (sent.get(i).address().equals(address)) return i;
+        }
+        return -1;
+    }
+
+    @Test
+    void loadArrivesInStagesLikeARealPlayer() {
+        sim.start(now, List.of());
+        sent.clear();
+        assertNull(cmd("load 2 c"));
+        // At once: the old track is gone.
+        assertEquals("loading", last(at("/deck/2")).arg(1));
+        assertEquals(1, at("/metadata/2/none").size());
+        assertEquals(OscMessage.of("/phrases/2/none", 0), last(at("/phrases/2/none")));
+        assertTrue(at("/metadata/2/title").isEmpty());
+        run(Simulator.LOAD_NO_TRACK + 0.01);
+        assertEquals("no_track", last(at("/deck/2")).arg(1));
+        run(Simulator.LOAD_TRACK_READY - Simulator.LOAD_NO_TRACK);
+        assertEquals("cued", last(at("/deck/2")).arg(1));
+        assertEquals(9003, last(at("/deck/2")).intArg(0));
+        assertTrue(at("/metadata/2/title").isEmpty(), "the title comes after the track");
+        run(0.4);
+        assertEquals("Simulated Track C", last(at("/metadata/2/title")).arg(0));
+        assertEquals("No Color", last(at("/metadata/2/color")).arg(0));
+        assertEquals(1, at("/metadata/2/key").size());
+        assertEquals(1, at("/metadata/2/genre").size());
+        assertTrue(indexOf("/metadata/2/title") < indexOf("/phrases/2"));
+    }
+
+    @Test
+    void playDuringALoadStartsBeforeTheTitleArrives() {
+        sim.start(now, List.of());
+        sent.clear();
+        cmd("load 2 a");
+        assertNull(cmd("play 2"));
+        run(0.6);
+        assertEquals("playing", last(at("/deck/2")).arg(1));
+        assertTrue(indexOf("/playing/2") >= 0);
+        assertTrue(indexOf("/playing/2") < indexOf("/metadata/2/title"), "plays before it has a title");
+        // A second load before the first is done: only the last track arrives.
+        sent.clear();
+        cmd("load 2 b");
+        cmd("load 2 c");
+        run(0.6);
+        assertEquals(1, at("/metadata/2/title").size());
+        assertEquals("Simulated Track C", last(at("/metadata/2/title")).arg(0));
+    }
+
+    @Test
+    void masterMovesToAPlayingDeckWhenTheMasterStops() {
+        sim.start(now, List.of());
+        cmd("play 2");
+        run(0.5);
+        sent.clear();
+        cmd("play 1 0");
+        assertEquals(OscMessage.of("/master/player", 2), last(at("/master/player")));
+        // The platter slows down: positions every 30 ms, creeping forward.
+        run(0.6);
+        List<OscMessage> positions = at("/position/1");
+        assertTrue(positions.size() >= Simulator.BRAKE_STEPS, "got " + positions.size());
+        assertTrue(positions.stream().allMatch(m -> m.intArg(2) == 0));
+        assertTrue(last(positions).intArg(5) > positions.get(0).intArg(5));
+        // With no other deck playing the master stays.
+        sent.clear();
+        cmd("play 2 0");
+        assertTrue(at("/master/player").isEmpty());
+    }
+
+    @Test
     void lateClientGetsTheDevicesToo() throws Exception {
         sim.start(now, List.of());
         ResponseRoute late = new ResponseRoute(InetAddress.getByName("127.0.0.1"), 50200);
@@ -200,11 +307,13 @@ class SimulatorTest {
         sim.start(now, List.of());
         sent.clear();
         assertNull(cmd("load 2 short warm"));
+        run(0.6);
         assertEquals("Simulated Short Track", last(at("/metadata/2/title")).arg(0));
         assertEquals("warm", last(at("/phrases/2")).arg(2));
         assertNull(cmd("bank 2 CLUB_2"));
         assertEquals("club_2", last(at("/phrases/2")).arg(2));
         assertNull(cmd("load 2 plain"));
+        run(0.6);
         assertEquals(OscMessage.of("/phrases/2/none", 9005), last(at("/phrases/2/none")));
         assertNotNull(cmd("bank 2 hot"), "an unanalyzed track has no bank");
 

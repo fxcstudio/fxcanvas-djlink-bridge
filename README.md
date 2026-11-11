@@ -25,7 +25,7 @@ features FXCanvas uses, plus these additions:
 Java 11 or later.
 
 ```
-java -jar fxc-djlink-bridge-1.4.0.jar [-o 17002] [-r] [-d NUM] [-L file.log]
+java -jar fxc-djlink-bridge-1.5.0.jar [-o 17002] [-r] [-d NUM] [-L file.log]
 ```
 
 The OSC server listens on `127.0.0.1` only. Send `/respond <port>` first to
@@ -49,9 +49,9 @@ players: device found messages for the players and a mixer (device 33),
 status, beats, the tempo master, metadata, phrases, positions and deck state.
 
 ```
-java -jar fxc-djlink-bridge-1.4.0.jar --simulate
-java -jar fxc-djlink-bridge-1.4.0.jar --sim-decks 3 --sim-track a --sim-track short --sim-speed 4
-java -jar fxc-djlink-bridge-1.4.0.jar --sim-track PIONEER/USBANLZ/P016/0000875E/ANLZ0000.EXT
+java -jar fxc-djlink-bridge-1.5.0.jar --simulate
+java -jar fxc-djlink-bridge-1.5.0.jar --sim-decks 3 --sim-track a --sim-track short --sim-speed 4
+java -jar fxc-djlink-bridge-1.5.0.jar --sim-track PIONEER/USBANLZ/P016/0000875E/ANLZ0000.EXT
 ```
 
 | Option | Default | Meaning |
@@ -61,7 +61,15 @@ java -jar fxc-djlink-bridge-1.4.0.jar --sim-track PIONEER/USBANLZ/P016/0000875E/
 | `--sim-speed X` | 1 | Time multiplier, for fast tests |
 | `--sim-track NAME\|FILE` | a, b, c, short, a, b | Track for the next player (repeatable). `--anlz` is the same option |
 | `--sim-script FILE` | | Timed commands, one `<seconds> <command>` per line, `#` comments |
+| `--sim-no-mixer` | off | No mixer (device 33) on the network. Every player stays off air, as real players do without a DJM on the link (since 1.5.0) |
 | `--send "COMMAND"` | | Send a command to a running simulator on `-o PORT` and exit (repeatable) |
+
+Since 1.5.0 the simulated players behave on the wire as real CDJ-3000s were
+measured to: a `load` arrives in stages over half a second (the old track is
+cleared, the deck reports `loading`, `no_track`, then the new track, then
+its metadata, phrases, beat grid, art and waveforms), a paused deck reports
+its slowing platter for half a second, and the tempo master moves to another
+playing deck when the master stops.
 
 Any `--sim-*` option implies `--simulate`. At start, player 1 plays as tempo
 master and on air; the others are cued at their first beat. Every loaded
@@ -104,7 +112,8 @@ numbers start at 1.
 | `info <deck> "title" ["artist"]` | Rename the loaded track (sends new metadata) |
 | `art <deck> <file>` | Send a JPEG or PNG file as the loaded track's album art |
 | `master <deck>` | Make the deck tempo master |
-| `onair <deck> <0\|1>` | Channel fader up or down |
+| `onair <deck> <0\|1>` | Channel fader up or down (an error while there is no mixer) |
+| `mixer <0\|1>` | The mixer leaves (0) or joins (1) the network, no restart needed. Without a mixer no player is on air (since 1.5.0) |
 | `state` | Print every deck (over OSC: one `/sim/deck` per deck) |
 | `help` | List the commands |
 
@@ -116,8 +125,8 @@ i playing, i looping, f tempo, i master`. `--send` exits with 0 when every
 command succeeded, 1 when one failed, and 2 when no simulator answered.
 
 ```
-java -jar fxc-djlink-bridge-1.4.0.jar --send "loop 1 8" --send state
-java -jar fxc-djlink-bridge-1.4.0.jar -o 17002 --send "bank 2 warm"
+java -jar fxc-djlink-bridge-1.5.0.jar --send "loop 1 8" --send state
+java -jar fxc-djlink-bridge-1.5.0.jar -o 17002 --send "bank 2 warm"
 ```
 
 A script example (`show.txt`), run with `--sim-script show.txt`:

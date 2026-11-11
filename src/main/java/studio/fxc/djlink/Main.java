@@ -159,6 +159,7 @@ public final class Main {
         List<SimTrack> tracks = Simulator.resolveTracks(options.simTracks);
         Simulator sim = new Simulator(state, server, options.simDecks, options.simSpeed, System.out::println,
                 assets);
+        sim.setMixer(!options.simNoMixer);
         if (options.simScript != null) {
             for (String line : Files.readAllLines(Paths.get(options.simScript), StandardCharsets.UTF_8)) {
                 sim.addScriptLine(line);

@@ -1,5 +1,28 @@
 # Changelog
 
+## 1.5.0 (2026-11-10)
+
+- New simulator option `--sim-no-mixer`: no mixer (device 33) on the simulated
+  network. Every player reports off air the whole time, as real players do
+  when no DJM is on the DJ Link network (measured on two CDJ-3000s). Use it to
+  test how a client behaves without on-air data. The `onair` command answers
+  with an error in this mode.
+- The simulator now sends what real players send, in the same order and at
+  the same pace (measured on two CDJ-3000s):
+  - `load` runs in stages over half a second. The deck reports `loading` and
+    clears its metadata, phrases, beat grid, art and waveforms, then
+    `no_track`, then the new track. Metadata and phrases follow, then the
+    beat grid and art, then the waveforms. A `play` during the load starts
+    the deck as soon as the track is there, before its title arrives.
+  - A paused deck reports its position every 30 ms for half a second while
+    the platter slows down.
+  - When the tempo master stops, ends or loads a track, the lowest playing
+    deck becomes master.
+  - Metadata has the album, colour (`No Color`), genre and key.
+- New simulator command `mixer <0|1>`: the mixer leaves or joins the running
+  network, without a restart. When it leaves, every player goes off air. When
+  it joins, all faders are down until an `onair` command.
+
 ## 1.4.0 (2026-11-05)
 
 - Support for the CDJ-3000X. The bridge now uses a preview of beat-link 8.1.0,

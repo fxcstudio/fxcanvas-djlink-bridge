@@ -34,7 +34,11 @@ import java.util.function.Consumer;
  * Feeds {@link BridgeState} the same events the beat-link adapter does
  * (devices, status, beats, master, metadata, phrases, positions, deck state),
  * so a client cannot tell a simulated deck from a real one at the OSC level.
- * Decks are 1..N plus a mixer (33). Tempo is constant per track; pitch,
+ * Decks are 1..N plus a mixer (33), unless {@link #setMixer} turned the mixer
+ * off: then no deck ever goes on air, as with players and no DJM on the link.
+ * Loads, pauses and master hand-offs follow what real CDJ-3000s send (see
+ * {@link #beginLoad}, {@link #brake}, {@link #handOffMaster}).
+ * Tempo is constant per track; pitch,
  * seeks, loops, master hand-offs, track loads and Lighting banks are driven by
  * commands ({@link SimCommands}).
  *
@@ -46,6 +50,7 @@ public final class Simulator {
     public static final int MIXER = 33;
     public static final String DECK_NAME = "CDJ-3000";
     public static final String MIXER_NAME = "DJM-A9";
+    private static final String MIXER_IP = "127.0.0.43";
 
     /** One simulated player. */
     static final class Deck {
@@ -62,6 +67,12 @@ public final class Simulator {
         boolean looping;
         int loopStart;
         int loopEnd;
+        /** A load runs: the old track is gone, the new one is not there yet. */
+        boolean loading;
+        /** Counts loads, so a stage of an older load does nothing. */
+        int loadGeneration;
+        /** Play was pressed while the track still loads. */
+        boolean playWhenLoaded;
 
         Deck(int number) {
             this.number = number;
@@ -86,6 +97,7 @@ public final class Simulator {
     private final double speed;
     private final Consumer<String> console;
     private int master = -1;
+    private boolean mixer = true;
     private long lastNanos = -1;
     private double elapsedSeconds;
 
@@ -101,6 +113,38 @@ public final class Simulator {
     }
 
     private final List<Scheduled> script = new ArrayList<>();
+
+    /** Something the simulated players do a moment later (a stage of a load, the platter slowing down). */
+    private static final class Pending {
+        final double at;
+        final Runnable action;
+
+        Pending(double at, Runnable action) {
+            this.at = at;
+            this.action = action;
+        }
+    }
+
+    private final List<Pending> pending = new ArrayList<>();
+
+    /** Run @p action when the simulated time is @p seconds later. Same order for the same time. */
+    private void after(double seconds, Runnable action) {
+        final Pending p = new Pending(elapsedSeconds + seconds, action);
+        int i = pending.size();
+        while (i > 0 && pending.get(i - 1).at > p.at) i--;
+        pending.add(i, p);
+    }
+
+    // What a real CDJ-3000 does, measured on the wire (2026-11-10): seconds
+    // after the load starts.
+    static final double LOAD_NO_TRACK = 0.06;
+    static final double LOAD_TRACK_READY = 0.19;
+    static final double LOAD_METADATA = 0.35;
+    static final double LOAD_GRID_AND_ART = 0.38;
+    static final double LOAD_WAVEFORMS = 0.50;
+    /** A paused platter reports its position every 30 ms while it slows down, for about half a second. */
+    static final double BRAKE_STEP = 0.03;
+    static final int BRAKE_STEPS = 16;
 
     /**
      * @param deckCount 1-6 players
@@ -123,6 +167,15 @@ public final class Simulator {
         for (int i = 1; i <= n; i++) decks.add(new Deck(i));
     }
 
+    /**
+     * With no mixer (false), {@link #start} announces no device 33 and every
+     * deck stays off air: real players report "off air" when no DJM is on the
+     * network. Call before {@link #start}.
+     */
+    public void setMixer(boolean mixer) {
+        this.mixer = mixer;
+    }
+
     /** Add a script line {@code "<seconds> <command>"}; blank lines and # comments are skipped. */
     public void addScriptLine(String line) {
         String trimmed = line.trim();
@@ -143,7 +196,7 @@ public final class Simulator {
         for (Deck deck : decks) {
             state.deviceFound(deck.number, DECK_NAME, "127.0.0." + (10 + deck.number));
         }
-        state.deviceFound(MIXER, MIXER_NAME, "127.0.0.43");
+        if (mixer) state.deviceFound(MIXER, MIXER_NAME, MIXER_IP);
         String[] defaults = {"a", "b", "c", "short", "a", "b"};
         for (Deck deck : decks) {
             int i = deck.number - 1;
@@ -151,10 +204,10 @@ public final class Simulator {
             load(deck, track);
         }
         Deck first = decks.get(0);
-        first.onAir = true;
+        first.onAir = mixer;
         setMaster(first.number);
         setPlaying(first, true);
-        logger.info("Simulating {} decks (speed x{})", decks.size(), speed);
+        logger.info("Simulating {} decks{} (speed x{})", decks.size(), mixer ? " and a mixer" : ", no mixer", speed);
     }
 
     // =========================================================================
@@ -175,6 +228,9 @@ public final class Simulator {
             logger.info("Script at {}s: {}", next.at, next.command);
             OscMessage msg = SimCommands.parse(next.command);
             if (msg != null) command(msg);
+        }
+        while (!pending.isEmpty() && pending.get(0).at <= elapsedSeconds) {
+            pending.remove(0).action.run();
         }
         for (Deck deck : decks) {
             advance(deck, dt);
@@ -206,6 +262,7 @@ public final class Simulator {
             deck.atEnd = true;
             emitPosition(deck, PositionData.REASON_MOVEMENT);
             emitStatus(deck);
+            if (deck.number == master) handOffMaster(deck);
             return;
         }
         deck.position = next;
@@ -246,7 +303,8 @@ public final class Simulator {
         float tempo = deck.track == null ? Float.NaN : (float) deck.effectiveTempo();
         state.status(deck.number, tempo, true, deck.playing, deck.onAir);
         String playState;
-        if (deck.track == null) playState = "no_track";
+        if (deck.loading) playState = "loading";
+        else if (deck.track == null) playState = "no_track";
         else if (deck.atEnd) playState = "ended";
         else if (deck.playing && deck.looping) playState = "looping";
         else if (deck.playing) playState = "playing";
@@ -284,6 +342,109 @@ public final class Simulator {
         emitStatus(deck);
     }
 
+    /**
+     * Load a track the way a player does, in stages (the times are the LOAD_
+     * constants). The old track goes first: the deck reports "loading" and
+     * clears its metadata, phrases and assets. Then "no_track", then the new
+     * track (cued, or playing when play was pressed meanwhile), and only then
+     * its metadata and phrases, its beat grid and art, and last its waveforms.
+     * So a client sees a deck that plays before it has a title, as it does
+     * from a real player.
+     */
+    private void beginLoad(Deck deck, SimTrack track) {
+        final int gen = ++deck.loadGeneration;
+        final boolean wasMaster = deck.number == master;
+        deck.track = null;
+        deck.loading = true;
+        deck.playWhenLoaded = false;
+        deck.playing = false;
+        deck.cued = false;
+        deck.atEnd = false;
+        deck.looping = false;
+        deck.position = 0;
+        deck.lastBeatIndex = 0;
+        emitStatus(deck);
+        if (wasMaster) handOffMaster(deck);
+        state.metadata(deck.number, null);
+        state.phrasesNone(deck.number, 0);
+        if (assets != null) {
+            state.beatGridNone(deck.number, 0);
+            state.artNone(deck.number, 0);
+            state.waveformNone(deck.number, 0, WaveformData.Kind.PREVIEW);
+            state.waveformNone(deck.number, 0, WaveformData.Kind.DETAIL);
+        }
+        after(LOAD_NO_TRACK, () -> {
+            if (deck.loadGeneration != gen) return;
+            deck.loading = false;
+            emitStatus(deck);
+        });
+        after(LOAD_TRACK_READY, () -> {
+            if (deck.loadGeneration != gen) return;
+            deck.track = track;
+            deck.cued = true;
+            emitPosition(deck, PositionData.REASON_MOVEMENT);
+            emitStatus(deck);
+            if (deck.playWhenLoaded) setPlaying(deck, true);
+            deck.playWhenLoaded = false;
+        });
+        after(LOAD_METADATA, () -> {
+            if (deck.loadGeneration != gen || deck.track == null) return;
+            sendMetadata(deck);
+            sendPhrases(deck);
+        });
+        after(LOAD_GRID_AND_ART, () -> {
+            if (deck.loadGeneration != gen || deck.track == null || assets == null) return;
+            try {
+                BeatGridData grid = SimAssets.beatGrid(deck.track);
+                state.beatGrid(deck.number, deck.track.trackId, grid.beatCount(),
+                        assets.write("p" + deck.number + "-grid", "fxbg", AssetCodec.encode(grid)).toString());
+                sendArt(deck.number, deck.track);
+            } catch (IOException | RuntimeException e) {
+                logger.warn("Unable to write simulated track assets for deck {}", deck.number, e);
+            }
+        });
+        after(LOAD_WAVEFORMS, () -> {
+            if (deck.loadGeneration != gen || deck.track == null || assets == null) return;
+            try {
+                sendWaveforms(deck.number, deck.track);
+            } catch (IOException | RuntimeException e) {
+                logger.warn("Unable to write simulated waveforms for deck {}", deck.number, e);
+            }
+        });
+    }
+
+    /**
+     * The tempo master stopped: the lowest playing deck takes over, as the
+     * players do among themselves. With no other deck playing it stays master.
+     */
+    private void handOffMaster(Deck stopped) {
+        for (Deck other : decks) {
+            if (other != stopped && other.playing) {
+                setMaster(other.number);
+                return;
+            }
+        }
+    }
+
+    /**
+     * A platter does not stop at once: for about half a second a paused deck
+     * reports a position every 30 ms that still creeps forward, slower each time.
+     */
+    private void brake(Deck deck) {
+        final int gen = deck.loadGeneration;
+        final SimTrack track = deck.track;
+        final double beatsPerStep = deck.effectiveTempo() / 60.0 * BRAKE_STEP;
+        for (int i = 1; i <= BRAKE_STEPS; i++) {
+            final double slowdown = 1.0 - (double) i / BRAKE_STEPS;
+            after(i * BRAKE_STEP, () -> {
+                if (deck.playing || deck.loadGeneration != gen || deck.track != track || deck.cued) return;
+                deck.position = Math.min(track.beatCount - 1, deck.position + beatsPerStep * slowdown * 0.5);
+                deck.lastBeatIndex = (int) Math.floor(deck.position);
+                emitPosition(deck, PositionData.REASON_MOVEMENT);
+            });
+        }
+    }
+
     /** Waveforms, beat grid and art for a newly loaded track (the real ones from an analysis file if read). */
     private void sendAssets(int player, SimTrack track) {
         if (assets == null) return;
@@ -301,8 +462,10 @@ public final class Simulator {
 
     private void sendMetadata(Deck deck) {
         final SimTrack track = deck.track;
-        state.metadata(deck.number, new TrackInfo(track.trackId, track.title, track.artist, null, "", "",
-                (int) (track.durationMs() / 1000), null, null, null, null, 0, null, track.bpm));
+        // The fields a rekordbox track always has; label, original artist and
+        // remixer are sent only when the track has them, as from real players.
+        state.metadata(deck.number, new TrackInfo(track.trackId, track.title, track.artist, "", "No Color", "",
+                (int) (track.durationMs() / 1000), "Electro", "8A", null, null, 0, null, track.bpm));
     }
 
     /** The track's cover file if it has one, else generated art. */
@@ -331,12 +494,21 @@ public final class Simulator {
     }
 
     private void setPlaying(Deck deck, boolean playing) {
-        if (deck.track == null) return;
+        if (deck.track == null) {
+            // Play pressed while the track still loads: it starts when the track is there.
+            if (deck.loading || deck.loadGeneration > 0) deck.playWhenLoaded = playing;
+            return;
+        }
         if (playing && deck.atEnd) return;
+        final boolean wasPlaying = deck.playing;
         deck.playing = playing;
         if (playing) deck.cued = false;
         emitPosition(deck, PositionData.REASON_MOVEMENT);
         emitStatus(deck);
+        if (wasPlaying && !playing) {
+            if (deck.number == master) handOffMaster(deck);
+            brake(deck);
+        }
     }
 
     private void seek(Deck deck, double position) {
@@ -357,6 +529,25 @@ public final class Simulator {
         state.masterChanged(number);
         Deck deck = deck(number);
         if (deck != null && deck.track != null) state.masterTempo((float) deck.effectiveTempo());
+    }
+
+    /**
+     * The mixer joins or leaves the running network. When it leaves, every
+     * deck goes off air; when it joins, all faders are down until an
+     * {@code onair} command.
+     */
+    private void connectMixer(boolean connected) {
+        if (connected == mixer) return;
+        mixer = connected;
+        if (connected) {
+            state.deviceFound(MIXER, MIXER_NAME, MIXER_IP);
+            return;
+        }
+        for (Deck deck : decks) {
+            deck.onAir = false;
+            emitStatus(deck);
+        }
+        state.deviceLost(MIXER, MIXER_NAME, MIXER_IP);
     }
 
     private Deck deck(int number) {
@@ -427,6 +618,12 @@ public final class Simulator {
             for (Deck deck : decks) console.accept(describe(deck));
             return null;
         }
+        if (name.equals("mixer")) {
+            Integer on = msg.intArg(0);
+            if (on == null) return fail("mixer: give 1 (a mixer on the network) or 0 (none)");
+            connectMixer(on != 0);
+            return null;
+        }
         Integer number = msg.intArg(0);
         Deck deck = number == null ? null : deck(number);
         if (deck == null) {
@@ -439,6 +636,10 @@ public final class Simulator {
                 return null;
             }
             case "cue":
+                if (deck.playing && deck.number == master) {
+                    deck.playing = false;
+                    handOffMaster(deck);
+                }
                 deck.playing = false;
                 deck.looping = false;
                 seek(deck, 0);
@@ -506,7 +707,7 @@ public final class Simulator {
                     if (bank == null) return fail("load: unknown bank '" + msg.arg(2) + "' (" + bankNames() + ")");
                     track = track.withBank(bank);
                 }
-                load(deck, track);
+                beginLoad(deck, track);
                 return null;
             }
             case "bank": {
@@ -547,6 +748,7 @@ public final class Simulator {
                 return null;
             }
             case "onair": {
+                if (!mixer) return fail("onair: no mixer on this network (mixer 1 adds one)");
                 Integer on = msg.intArg(1);
                 deck.onAir = on == null || on != 0;
                 emitStatus(deck);

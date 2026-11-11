@@ -117,6 +117,7 @@ class SimAssetsTest {
             // Loading another track replaces them.
             sent.clear();
             assertEquals(null, sim.command(SimCommands.parse("load 1 c")));
+            for (long t = 5_000_000L; t <= 700_000_000L; t += 5_000_000L) sim.tick(t);   // a load takes half a second
             assertTrue(sent.stream().anyMatch(m -> m.address().equals("/art/1") && m.intArg(0) == 9003));
 
             // A cover file of your own: sent as is, with its real size.

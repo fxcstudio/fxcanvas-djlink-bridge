@@ -50,6 +50,10 @@ class OptionsTest {
         assertEquals("show.txt", o.simScript);
 
         assertTrue(Options.parse(new String[]{"--sim-track", "a"}).simulate, "any --sim-* implies --simulate");
+        assertFalse(o.simNoMixer);
+        Options noMixer = Options.parse(new String[]{"--sim-no-mixer"});
+        assertTrue(noMixer.simNoMixer);
+        assertTrue(noMixer.simulate);
         assertEquals(4, Options.parse(new String[]{"--sim-track", "a", "--sim-track", "b", "--sim-track", "c",
                 "--sim-track", "short"}).simDecks, "one deck per track");
 
